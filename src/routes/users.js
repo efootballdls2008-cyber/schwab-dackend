@@ -4,6 +4,7 @@ const { body, param } = require('express-validator');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
 const { authenticate, requireAdmin } = require('../middleware/auth');
+const createUserNotification = require('../utils/createUserNotification');
 
 const router = express.Router();
 
@@ -100,6 +101,13 @@ router.patch(
         return res.status(400).json({ success: false, message: 'No valid fields to update' });
       }
 
+      // Snapshot old balance BEFORE the update so we can compute the diff
+      let oldBalance = null;
+      if (req.user.role === 'Admin' && updates['balance'] !== undefined) {
+        const [[snap]] = await pool.query('SELECT balance FROM users WHERE id = ?', [userId]);
+        oldBalance = parseFloat(snap?.balance ?? 0);
+      }
+
       const setClauses = Object.keys(updates).map((k) => `\`${k}\` = ?`).join(', ');
       const values = [...Object.values(updates), userId];
       await pool.query(`UPDATE users SET ${setClauses} WHERE id = ?`, values);
@@ -110,6 +118,21 @@ router.patch(
          FROM users WHERE id = ?`,
         [userId]
       );
+
+      // ── Notify user when admin credits their balance ─────────
+      if (oldBalance !== null) {
+        const newBal = parseFloat(updates['balance']);
+        const diff   = newBal - oldBalance;
+        if (diff > 0) {
+          createUserNotification({
+            userId,
+            title: 'Balance Updated',
+            message: `Your account balance has been updated. $${diff.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been added to your account by the platform.`,
+            type: 'system',
+          });
+        }
+      }
+
       res.json({ success: true, data: updated });
     } catch (err) {
       next(err);

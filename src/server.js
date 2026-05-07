@@ -30,6 +30,7 @@ const purchaseRoutes        = require('./routes/purchases');
 const platformSettingsRoutes = require('./routes/platformSettings');
 const platformAccountRoutes = require('./routes/platformAccounts');
 const adminActionRoutes     = require('./routes/adminActions');
+const kycRoutes             = require('./routes/kyc');
 
 const app = express();
 
@@ -49,6 +50,10 @@ app.use(cors({
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// ── Static uploads ───────────────────────────────────────────
+const uploadsPath = require('path').join(__dirname, '../uploads');
+app.use('/uploads', express.static(uploadsPath));
 
 // ── camelCase response transformer ───────────────────────────
 app.use(camelCaseResponse);
@@ -97,6 +102,7 @@ app.use('/purchases',         purchaseRoutes);
 app.use('/platformSettings',  platformSettingsRoutes);
 app.use('/platformAccounts',  platformAccountRoutes);
 app.use('/adminActions',      adminActionRoutes);
+app.use('/kyc',               kycRoutes);
 app.use('/notifications',        buildNotificationRoutes('notifications'));
 app.use('/userNotifications',    buildNotificationRoutes('user_notifications'));
 app.use('/adminNotifications',   adminNotifRouter);

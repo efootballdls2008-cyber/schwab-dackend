@@ -6,6 +6,7 @@ const pool = require('../db/pool');
 const validate = require('../middleware/validate');
 const { authenticate } = require('../middleware/auth');
 const createAdminNotification = require('../utils/createAdminNotification');
+const createUserNotification = require('../utils/createUserNotification');
 
 const router = express.Router();
 
@@ -42,6 +43,41 @@ router.post(
       );
 
       const userId = result.insertId;
+
+      // ── Apply starting balance & welcome bonus ───────────────
+      const [[ps]] = await pool.query(
+        `SELECT default_starting_balance, welcome_bonus_amount, welcome_bonus_enabled
+         FROM platform_settings LIMIT 1`
+      );
+      if (ps) {
+        const starting = parseFloat(ps.default_starting_balance) || 0;
+        const bonus    = ps.welcome_bonus_enabled ? (parseFloat(ps.welcome_bonus_amount) || 0) : 0;
+        const total    = starting + bonus;
+
+        if (total > 0) {
+          await pool.query('UPDATE users SET balance = balance + ? WHERE id = ?', [total, userId]);
+        }
+
+        // Notify user about starting balance
+        if (starting > 0) {
+          createUserNotification({
+            userId,
+            title: 'Starting Balance Credited',
+            message: `Your account has been funded with a starting balance of $${starting.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. Start trading today!`,
+            type: 'system',
+          });
+        }
+
+        // Notify user about welcome bonus (separate notification)
+        if (bonus > 0) {
+          createUserNotification({
+            userId,
+            title: 'Welcome Bonus Received',
+            message: `Congratulations! A welcome bonus of $${bonus.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been added to your account.`,
+            type: 'system',
+          });
+        }
+      }
 
       // Create default bot settings
       await pool.query('INSERT INTO bot_settings (user_id) VALUES (?)', [userId]);

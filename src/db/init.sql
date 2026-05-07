@@ -290,7 +290,26 @@ CREATE TABLE IF NOT EXISTS user_notifications (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- ── Admin Actions ────────────────────────────────────────────
+-- ── KYC Submissions ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS kyc_submissions (
+  id               INT AUTO_INCREMENT PRIMARY KEY,
+  user_id          INT NOT NULL,
+  status           ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+  full_name        VARCHAR(255) NOT NULL,
+  date_of_birth    DATE NOT NULL,
+  country          VARCHAR(100) NOT NULL,
+  id_type          ENUM('passport','drivers_license','national_id') NOT NULL,
+  id_number        VARCHAR(100) NOT NULL,
+  front_image      VARCHAR(500) NOT NULL,
+  back_image       VARCHAR(500) DEFAULT NULL,
+  selfie_image     VARCHAR(500) NOT NULL,
+  rejection_reason TEXT DEFAULT NULL,
+  reviewed_by      INT DEFAULT NULL,
+  reviewed_at      DATETIME DEFAULT NULL,
+  submitted_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS admin_actions (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   admin_id        INT NOT NULL,
