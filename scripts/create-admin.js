@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 /**
- * Script to create an admin user
+ * Upsert an admin user (creates or resets password if already exists).
  * Usage: node scripts/create-admin.js <email> <password> <firstName> <lastName>
+ * Example: node scripts/create-admin.js admin@schwab.com admin1234 Admin Schwab
  */
 
 require('dotenv').config();
@@ -11,46 +12,50 @@ const pool = require('../src/db/pool');
 
 async function createAdmin() {
   const args = process.argv.slice(2);
-  
+
   if (args.length < 4) {
     console.error('Usage: node scripts/create-admin.js <email> <password> <firstName> <lastName>');
-    console.error('Example: node scripts/create-admin.js admin@schwab.com admin123 Admin User');
+    console.error('Example: node scripts/create-admin.js admin@schwab.com admin1234 Admin Schwab');
     process.exit(1);
   }
 
   const [email, password, firstName, lastName] = args;
 
   try {
-    // Check if user already exists
+    const hashedPassword = await bcrypt.hash(password, 12);
+    const memberSince = new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+
     const [[existing]] = await pool.query('SELECT id FROM users WHERE email = ?', [email]);
-    
+
     if (existing) {
-      console.error(`❌ User with email ${email} already exists`);
-      process.exit(1);
+      // Update existing user to Admin + reset password
+      await pool.query(
+        `UPDATE users SET password = ?, first_name = ?, last_name = ?, role = 'Admin', account_status = 'active' WHERE email = ?`,
+        [hashedPassword, firstName, lastName, email]
+      );
+      console.log(`✅ Admin user updated: ${email}`);
+    } else {
+      const [result] = await pool.query(
+        `INSERT INTO users (email, password, first_name, last_name, role, account_status, member_since, balance, currency)
+         VALUES (?, ?, ?, ?, 'Admin', 'active', ?, 0, 'USD')`,
+        [email, hashedPassword, firstName, lastName, memberSince]
+      );
+      // Ensure bot_settings row exists
+      await pool.query('INSERT IGNORE INTO bot_settings (user_id) VALUES (?)', [result.insertId]);
+      console.log(`✅ Admin user created: ${email} (ID: ${result.insertId})`);
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    // Create admin user
-    const [result] = await pool.query(
-      `INSERT INTO users (email, password, first_name, last_name, role, account_status, member_since, balance, currency)
-       VALUES (?, ?, ?, ?, 'Admin', 'active', ?, 0, 'USD')`,
-      [email, hashedPassword, firstName, lastName, new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })]
-    );
-
-    console.log('✅ Admin user created successfully!');
     console.log('');
-    console.log('Credentials:');
-    console.log(`  Email: ${email}`);
-    console.log(`  Password: ${password}`);
-    console.log(`  User ID: ${result.insertId}`);
+    console.log('  Credentials:');
+    console.log(`    Email    : ${email}`);
+    console.log(`    Password : ${password}`);
     console.log('');
-    console.log('⚠️  Please change the password after first login!');
+    console.log('⚠️  Change the password after first login.');
 
+    await pool.end();
     process.exit(0);
   } catch (error) {
-    console.error('❌ Error creating admin user:', error.message);
+    console.error('❌ Error:', error.message);
     process.exit(1);
   }
 }

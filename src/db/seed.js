@@ -41,17 +41,31 @@ async function seed() {
   // ── Admin user ─────────────────────────────────────────────
   const adminHash = await bcrypt.hash('admin1234', 12);
   await pool.query(`
-    INSERT IGNORE INTO users (id, email, password, first_name, last_name, role, balance, currency, account_status, member_since)
-    VALUES (1, 'admin@schwab.com', ?, 'Admin', 'User', 'Admin', 0, 'USD', 'active', 'Jan 2024')
+    INSERT INTO users (id, email, password, first_name, last_name, role, balance, currency, account_status, member_since)
+    VALUES (1, 'admin@schwab.com', ?, 'Admin', 'Schwab', 'Admin', 0, 'USD', 'active', 'Jan 2024')
+    ON DUPLICATE KEY UPDATE
+      email     = VALUES(email),
+      password  = VALUES(password),
+      first_name = VALUES(first_name),
+      last_name  = VALUES(last_name),
+      role       = VALUES(role),
+      account_status = VALUES(account_status)
   `, [adminHash]);
 
-  // ── Demo user ──────────────────────────────────────────────
+  // ── Demo / client user ─────────────────────────────────────
   const demoHash = await bcrypt.hash('demo1234', 12);
   await pool.query(`
-    INSERT IGNORE INTO users (id, email, password, first_name, last_name, role, balance, currency,
+    INSERT INTO users (id, email, password, first_name, last_name, role, balance, currency,
       phone, country, address, account_status, member_since)
     VALUES (2, 'demo@schwab.com', ?, 'Jonathan', 'Smith', 'Member', 119940.51633, 'USD',
       '+1 (555) 000-0000', 'United States', '123 Main Street, New York, NY 10001', 'active', 'Jan 2024')
+    ON DUPLICATE KEY UPDATE
+      email     = VALUES(email),
+      password  = VALUES(password),
+      first_name = VALUES(first_name),
+      last_name  = VALUES(last_name),
+      role       = VALUES(role),
+      account_status = VALUES(account_status)
   `, [demoHash]);
 
   // ── Bot settings for demo user ─────────────────────────────
@@ -127,7 +141,11 @@ async function seed() {
     );
   }
 
-  console.log('[seed] Done. Users: admin@schwab.com / admin1234, demo@schwab.com / demo1234');
+  console.log('[seed] Done.');
+  console.log('');
+  console.log('  Admin  → admin@schwab.com  / admin1234');
+  console.log('  Client → demo@schwab.com   / demo1234');
+  console.log('');
   await pool.end();
 }
 

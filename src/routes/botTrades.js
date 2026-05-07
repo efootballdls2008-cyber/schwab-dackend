@@ -3,7 +3,8 @@ const { query, body, param } = require('express-validator');
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireAdmin } = require('../middleware/auth');
+const createUserNotification = require('../utils/createUserNotification');
 
 const router = express.Router();
 router.use(authenticate);
@@ -72,6 +73,20 @@ router.post(
          openedAt || new Date(), closedAt || null, status || 'open']
       );
       const [[row]] = await pool.query('SELECT * FROM bot_trades WHERE id = ?', [id]);
+
+      // Notify user of new bot trade opened
+      const tradeStatus = status || 'open';
+      if (tradeStatus === 'open') {
+        createUserNotification({
+          userId,
+          title: `Bot Trade Opened — ${pair}`,
+          message: `${strategy || 'Bot'} opened a ${side.toUpperCase()} position on ${pair} at $${parseFloat(entryPrice).toLocaleString()}.`,
+          type: 'bot_open',
+          relatedId: id,
+          relatedType: 'bot_trade',
+        });
+      }
+
       res.status(201).json({ success: true, data: row });
     } catch (err) {
       next(err);
@@ -101,6 +116,27 @@ router.patch('/:id', async (req, res, next) => {
     const set = Object.keys(updates).map((k) => `\`${k}\` = ?`).join(', ');
     await pool.query(`UPDATE bot_trades SET ${set} WHERE id = ?`, [...Object.values(updates), req.params.id]);
     const [[updated]] = await pool.query('SELECT * FROM bot_trades WHERE id = ?', [req.params.id]);
+
+    // Notify user when trade closes
+    if (updates.status === 'closed' && trade.status !== 'closed') {
+      const pnlVal = parseFloat(updates.pnl ?? trade.pnl ?? 0);
+      const pnlPctVal = parseFloat(updates.pnl_pct ?? trade.pnl_pct ?? 0);
+      const isProfit = pnlVal >= 0;
+      const pnlStr = `${isProfit ? '+' : ''}$${Math.abs(pnlVal).toFixed(2)} (${isProfit ? '+' : ''}${pnlPctVal.toFixed(2)}%)`;
+      // Determine if it was take profit or stop loss based on pnl
+      const closeType = isProfit ? 'take_profit' : 'stop_loss';
+      createUserNotification({
+        userId: trade.user_id,
+        title: isProfit
+          ? `Take Profit Hit — ${trade.pair} ${pnlStr}`
+          : `Stop Loss Hit — ${trade.pair} ${pnlStr}`,
+        message: `${trade.strategy || 'Bot'} closed your ${trade.side.toUpperCase()} position on ${trade.pair}. P&L: ${pnlStr}`,
+        type: closeType,
+        relatedId: req.params.id,
+        relatedType: 'bot_trade',
+      });
+    }
+
     res.json({ success: true, data: updated });
   } catch (err) {
     next(err);
@@ -108,3 +144,14 @@ router.patch('/:id', async (req, res, next) => {
 });
 
 module.exports = router;
+
+// ── DELETE /botTrades/:id  (Admin only) ──────────────────────
+router.delete('/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const [result] = await pool.query('DELETE FROM bot_trades WHERE id = ?', [req.params.id]);
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Bot trade not found' });
+    res.json({ success: true, message: 'Bot trade deleted' });
+  } catch (err) {
+    next(err);
+  }
+});

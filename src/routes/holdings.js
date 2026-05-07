@@ -119,3 +119,20 @@ router.patch(
 );
 
 module.exports = router;
+
+// ── DELETE /holdings/:id  (Admin only) ───────────────────────
+router.delete(
+  '/:id',
+  requireAdmin,
+  [param('id').isInt({ min: 1 })],
+  validate,
+  async (req, res, next) => {
+    try {
+      const [result] = await pool.query('DELETE FROM holdings WHERE id = ?', [req.params.id]);
+      if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Holding not found' });
+      res.json({ success: true, message: 'Holding deleted' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);

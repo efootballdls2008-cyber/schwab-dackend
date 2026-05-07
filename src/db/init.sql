@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS users (
   address         TEXT DEFAULT NULL,
   member_since    VARCHAR(50) DEFAULT NULL,
   account_status  ENUM('active','suspended','pending') NOT NULL DEFAULT 'active',
+  kyc_verified    TINYINT(1) NOT NULL DEFAULT 0,
   created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
@@ -47,6 +48,8 @@ CREATE TABLE IF NOT EXISTS platform_settings (
   welcome_bonus_enabled     TINYINT(1) NOT NULL DEFAULT 0,
   bot_default_strategy      VARCHAR(100) DEFAULT 'AI Scalper Pro',
   bot_default_risk_level    VARCHAR(50) DEFAULT 'Moderate',
+  bot_default_timeframe     VARCHAR(20) DEFAULT '1h',
+  bot_confidence_threshold  DECIMAL(5,2) NOT NULL DEFAULT 70.00,
   bot_max_open_trades       INT NOT NULL DEFAULT 3,
   max_login_attempts        INT NOT NULL DEFAULT 5,
   session_timeout_minutes   INT NOT NULL DEFAULT 60,
@@ -159,7 +162,7 @@ CREATE TABLE IF NOT EXISTS bot_trades (
   pnl         DECIMAL(20,8) NOT NULL DEFAULT 0,
   pnl_pct     DECIMAL(10,4) NOT NULL DEFAULT 0,
   strategy    VARCHAR(100) DEFAULT NULL,
-  signal      TEXT DEFAULT NULL,
+  `signal`    TEXT DEFAULT NULL,
   opened_at   DATETIME DEFAULT NULL,
   closed_at   DATETIME DEFAULT NULL,
   status      ENUM('open','closed') NOT NULL DEFAULT 'open',
@@ -275,13 +278,15 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 -- ── User Notifications ───────────────────────────────────────
 CREATE TABLE IF NOT EXISTS user_notifications (
-  id          INT AUTO_INCREMENT PRIMARY KEY,
-  user_id     INT NOT NULL,
-  title       VARCHAR(255) NOT NULL,
-  message     TEXT NOT NULL,
-  type        VARCHAR(50) DEFAULT 'info',
-  is_read     TINYINT(1) NOT NULL DEFAULT 0,
-  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  user_id       INT NOT NULL,
+  title         VARCHAR(255) NOT NULL,
+  message       TEXT NOT NULL,
+  type          VARCHAR(50) DEFAULT 'info',
+  is_read       TINYINT(1) NOT NULL DEFAULT 0,
+  related_id    VARCHAR(100) DEFAULT NULL,
+  related_type  VARCHAR(100) DEFAULT NULL,
+  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 

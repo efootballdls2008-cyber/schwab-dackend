@@ -3,6 +3,8 @@ const { query, body, param } = require('express-validator');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
 const { authenticate, requireAdmin } = require('../middleware/auth');
+const createAdminNotification = require('../utils/createAdminNotification');
+const createUserNotification = require('../utils/createUserNotification');
 
 const router = express.Router();
 router.use(authenticate);
@@ -60,6 +62,27 @@ router.post(
          date || null, time || null, txId, status || 'pending']
       );
       const [[row]] = await pool.query('SELECT * FROM purchases WHERE id = ?', [result.insertId]);
+
+      // Admin notification for new buy order
+      const [[user]] = await pool.query('SELECT first_name, last_name FROM users WHERE id = ?', [userId]);
+      const userName = user ? `${user.first_name} ${user.last_name}` : `User #${userId}`;
+      createAdminNotification({
+        title: 'New Buy Order',
+        message: `${userName} placed a buy order for ${quantity} ${symbol} (${name}) at $${parseFloat(price).toFixed(2)} each.`,
+        type: 'order',
+        relatedId: result.insertId,
+        relatedType: 'purchase',
+      });
+      // User notification
+      createUserNotification({
+        userId,
+        title: 'Buy Order Submitted',
+        message: `Your order to buy ${quantity} ${symbol} at $${parseFloat(price).toFixed(2)} is pending.`,
+        type: 'order',
+        relatedId: result.insertId,
+        relatedType: 'purchase',
+      });
+
       res.status(201).json({ success: true, data: row });
     } catch (err) {
       next(err);
@@ -96,6 +119,28 @@ router.patch(
       }
 
       const [[updated]] = await pool.query('SELECT * FROM purchases WHERE id = ?', [req.params.id]);
+
+      // Notify user of order status change
+      if (status === 'completed') {
+        createUserNotification({
+          userId: purchase.user_id,
+          title: 'Buy Order Filled',
+          message: `Your order for ${purchase.quantity} ${purchase.symbol} at $${parseFloat(purchase.price).toFixed(2)} has been filled.`,
+          type: 'order',
+          relatedId: req.params.id,
+          relatedType: 'purchase',
+        });
+      } else if (status === 'rejected') {
+        createUserNotification({
+          userId: purchase.user_id,
+          title: 'Buy Order Rejected',
+          message: `Your order for ${purchase.quantity} ${purchase.symbol} was rejected.${req.body.rejectionReason ? ' Reason: ' + req.body.rejectionReason : ''}`,
+          type: 'order',
+          relatedId: req.params.id,
+          relatedType: 'purchase',
+        });
+      }
+
       res.json({ success: true, data: updated });
     } catch (err) {
       next(err);
@@ -104,3 +149,20 @@ router.patch(
 );
 
 module.exports = router;
+
+// ── DELETE /purchases/:id  (Admin only) ──────────────────────
+router.delete(
+  '/:id',
+  requireAdmin,
+  [param('id').isInt({ min: 1 })],
+  validate,
+  async (req, res, next) => {
+    try {
+      const [result] = await pool.query('DELETE FROM purchases WHERE id = ?', [req.params.id]);
+      if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Purchase not found' });
+      res.json({ success: true, message: 'Purchase deleted' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);

@@ -1,12 +1,17 @@
 require('dotenv').config();
+const http = require('http');
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const { Server: SocketIOServer } = require('socket.io');
+const jwt = require('jsonwebtoken');
 
 const errorHandler = require('./middleware/errorHandler');
-const { buildNotificationRoutes } = require('./routes/notifications');
+const camelCaseResponse = require('./middleware/camelCase');
+const { buildNotificationRoutes, adminNotifRouter } = require('./routes/notifications');
+const socketService = require('./socket/socketService');
 
 // ── Route imports ────────────────────────────────────────────
 const authRoutes            = require('./routes/auth');
@@ -44,6 +49,9 @@ app.use(cors({
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// ── camelCase response transformer ───────────────────────────
+app.use(camelCaseResponse);
 
 // ── Logging ──────────────────────────────────────────────────
 if (process.env.NODE_ENV !== 'test') {
@@ -89,8 +97,9 @@ app.use('/purchases',         purchaseRoutes);
 app.use('/platformSettings',  platformSettingsRoutes);
 app.use('/platformAccounts',  platformAccountRoutes);
 app.use('/adminActions',      adminActionRoutes);
-app.use('/notifications',     buildNotificationRoutes('notifications'));
-app.use('/userNotifications', buildNotificationRoutes('user_notifications'));
+app.use('/notifications',        buildNotificationRoutes('notifications'));
+app.use('/userNotifications',    buildNotificationRoutes('user_notifications'));
+app.use('/adminNotifications',   adminNotifRouter);
 
 // ── 404 handler ──────────────────────────────────────────────
 app.use((req, res) => {
@@ -100,9 +109,37 @@ app.use((req, res) => {
 // ── Central error handler ────────────────────────────────────
 app.use(errorHandler);
 
+// ── HTTP + Socket.io server ───────────────────────────────────
+const httpServer = http.createServer(app);
+
+const corsOriginForSocket = process.env.CORS_ORIGIN || '*';
+const io = new SocketIOServer(httpServer, {
+  cors: {
+    origin: corsOriginForSocket === '*' ? '*' : corsOriginForSocket.split(',').map(o => o.trim()),
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+});
+
+// JWT auth middleware for socket connections
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (!token) return next(new Error('No token'));
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.handshake.auth.adminId = decoded.id;
+    socket.handshake.auth.role = decoded.role;
+    next();
+  } catch {
+    next(new Error('Invalid token'));
+  }
+});
+
+socketService.init(io);
+
 // ── Start ────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT) || 3001;
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`[server] Running on http://localhost:${PORT} (${process.env.NODE_ENV || 'development'})`);
 });
 

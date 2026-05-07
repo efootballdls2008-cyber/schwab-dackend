@@ -3,6 +3,8 @@ const { query, body, param } = require('express-validator');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
 const { authenticate, requireAdmin } = require('../middleware/auth');
+const createAdminNotification = require('../utils/createAdminNotification');
+const createUserNotification = require('../utils/createUserNotification');
 
 const router = express.Router();
 router.use(authenticate);
@@ -84,6 +86,46 @@ router.post(
          date || null, time || null, txId, note || null]
       );
       const [[row]] = await pool.query('SELECT * FROM deposits WHERE id = ?', [result.insertId]);
+
+      // Admin notification for new deposit/withdrawal
+      const [[user]] = await pool.query('SELECT first_name, last_name FROM users WHERE id = ?', [userId]);
+      const userName = user ? `${user.first_name} ${user.last_name}` : `User #${userId}`;
+      if (type === 'deposit') {
+        createAdminNotification({
+          title: 'New Deposit Request',
+          message: `${userName} submitted a deposit of $${parseFloat(amount).toFixed(2)} via ${method}.`,
+          type: 'deposit',
+          relatedId: result.insertId,
+          relatedType: 'deposit',
+        });
+        // User notification
+        createUserNotification({
+          userId,
+          title: 'Deposit Request Submitted',
+          message: `Your deposit of $${parseFloat(amount).toFixed(2)} via ${method} is pending review.`,
+          type: 'deposit',
+          relatedId: result.insertId,
+          relatedType: 'deposit',
+        });
+      } else {
+        createAdminNotification({
+          title: 'New Withdrawal Request',
+          message: `${userName} requested a withdrawal of $${parseFloat(amount).toFixed(2)} via ${method}.`,
+          type: 'withdrawal',
+          relatedId: result.insertId,
+          relatedType: 'withdrawal',
+        });
+        // User notification
+        createUserNotification({
+          userId,
+          title: 'Withdrawal Request Submitted',
+          message: `Your withdrawal of $${parseFloat(amount).toFixed(2)} via ${method} is pending review.`,
+          type: 'withdrawal',
+          relatedId: result.insertId,
+          relatedType: 'withdrawal',
+        });
+      }
+
       res.status(201).json({ success: true, data: row });
     } catch (err) {
       next(err);
@@ -118,6 +160,34 @@ router.patch(
       }
 
       const [[updated]] = await pool.query('SELECT * FROM deposits WHERE id = ?', [req.params.id]);
+
+      // Notify user of status change
+      const amt = `$${parseFloat(deposit.amount).toFixed(2)}`;
+      const method = deposit.method;
+      if (status === 'completed') {
+        createUserNotification({
+          userId: deposit.user_id,
+          title: deposit.type === 'deposit' ? 'Deposit Approved' : 'Withdrawal Approved',
+          message: deposit.type === 'deposit'
+            ? `Your deposit of ${amt} via ${method} has been approved and credited to your account.`
+            : `Your withdrawal of ${amt} via ${method} has been approved and is being processed.`,
+          type: deposit.type === 'deposit' ? 'deposit' : 'withdrawal',
+          relatedId: req.params.id,
+          relatedType: 'deposit',
+        });
+      } else if (status === 'rejected') {
+        createUserNotification({
+          userId: deposit.user_id,
+          title: deposit.type === 'deposit' ? 'Deposit Rejected' : 'Withdrawal Rejected',
+          message: deposit.type === 'deposit'
+            ? `Your deposit of ${amt} via ${method} was rejected.${req.body.rejectionReason ? ' Reason: ' + req.body.rejectionReason : ''}`
+            : `Your withdrawal of ${amt} via ${method} was rejected.${req.body.rejectionReason ? ' Reason: ' + req.body.rejectionReason : ''}`,
+          type: deposit.type === 'deposit' ? 'deposit' : 'withdrawal',
+          relatedId: req.params.id,
+          relatedType: 'deposit',
+        });
+      }
+
       res.json({ success: true, data: updated });
     } catch (err) {
       next(err);
@@ -126,3 +196,20 @@ router.patch(
 );
 
 module.exports = router;
+
+// ── DELETE /deposits/:id  (Admin only) ───────────────────────
+router.delete(
+  '/:id',
+  requireAdmin,
+  [param('id').isInt({ min: 1 })],
+  validate,
+  async (req, res, next) => {
+    try {
+      const [result] = await pool.query('DELETE FROM deposits WHERE id = ?', [req.params.id]);
+      if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Deposit not found' });
+      res.json({ success: true, message: 'Deposit deleted' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);

@@ -2,7 +2,7 @@ const express = require('express');
 const { query, body, param } = require('express-validator');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(authenticate);
@@ -56,3 +56,20 @@ router.post(
 );
 
 module.exports = router;
+
+// ── DELETE /profitOverview/:id  (Admin only) ─────────────────
+router.delete(
+  '/:id',
+  requireAdmin,
+  [param('id').isInt({ min: 1 })],
+  validate,
+  async (req, res, next) => {
+    try {
+      const [result] = await pool.query('DELETE FROM profit_overview WHERE id = ?', [req.params.id]);
+      if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Profit overview not found' });
+      res.json({ success: true, message: 'Profit overview deleted' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);

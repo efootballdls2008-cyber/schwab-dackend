@@ -43,3 +43,18 @@ router.post(
 );
 
 module.exports = router;
+
+// ── DELETE /adminActions/:id  (Admin only) ───────────────────
+router.delete(
+  '/:id',
+  [body('id').optional()],
+  async (req, res, next) => {
+    try {
+      const [result] = await pool.query('DELETE FROM admin_actions WHERE id = ?', [req.params.id]);
+      if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Action not found' });
+      res.json({ success: true, message: 'Action deleted' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);

@@ -5,6 +5,7 @@ const { body } = require('express-validator');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
 const { authenticate } = require('../middleware/auth');
+const createAdminNotification = require('../utils/createAdminNotification');
 
 const router = express.Router();
 
@@ -44,6 +45,15 @@ router.post(
 
       // Create default bot settings
       await pool.query('INSERT INTO bot_settings (user_id) VALUES (?)', [userId]);
+
+      // Admin notification: new user registered
+      createAdminNotification({
+        title: 'New User Registered',
+        message: `${firstName} ${lastName} (${email}) just created an account.`,
+        type: 'user',
+        relatedId: userId,
+        relatedType: 'user',
+      });
 
       const token = jwt.sign(
         { id: userId, email, role: 'Member' },
@@ -93,6 +103,17 @@ router.post(
         process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
       );
+
+      // Admin notification: user login (only for non-admin users to avoid noise)
+      if (user.role !== 'Admin') {
+        createAdminNotification({
+          title: 'User Login',
+          message: `${user.first_name} ${user.last_name} (${user.email}) logged in.`,
+          type: 'login',
+          relatedId: user.id,
+          relatedType: 'user',
+        });
+      }
 
       res.json({
         success: true,

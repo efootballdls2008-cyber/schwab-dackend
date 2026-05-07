@@ -3,6 +3,7 @@ const { query, body, param } = require('express-validator');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
 const { authenticate, requireAdmin } = require('../middleware/auth');
+const createUserNotification = require('../utils/createUserNotification');
 
 const router = express.Router();
 router.use(authenticate);
@@ -56,6 +57,17 @@ router.post(
         [userId, type, coin, price, amount, total, status || 'open']
       );
       const [[row]] = await pool.query('SELECT * FROM orders WHERE id = ?', [result.insertId]);
+
+      // Notify user of new order
+      createUserNotification({
+        userId,
+        title: `${type === 'buy' ? 'Buy' : 'Sell'} Order Placed — ${coin}`,
+        message: `${type === 'buy' ? 'Buy' : 'Sell'} order for ${amount} ${coin} at $${parseFloat(price).toFixed(2)} (Total: $${parseFloat(total).toFixed(2)}) is open.`,
+        type: 'order',
+        relatedId: result.insertId,
+        relatedType: 'order',
+      });
+
       res.status(201).json({ success: true, data: row });
     } catch (err) {
       next(err);
@@ -77,6 +89,28 @@ router.patch(
       }
       await pool.query('UPDATE orders SET status = ? WHERE id = ?', [req.body.status, req.params.id]);
       const [[updated]] = await pool.query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+
+      // Notify user of order status change
+      if (req.body.status === 'filled') {
+        createUserNotification({
+          userId: order.user_id,
+          title: `Order Filled — ${order.coin}`,
+          message: `Your ${order.type} order for ${order.amount} ${order.coin} at $${parseFloat(order.price).toFixed(2)} has been filled.`,
+          type: 'order',
+          relatedId: req.params.id,
+          relatedType: 'order',
+        });
+      } else if (req.body.status === 'cancelled') {
+        createUserNotification({
+          userId: order.user_id,
+          title: `Order Cancelled — ${order.coin}`,
+          message: `Your ${order.type} order for ${order.amount} ${order.coin} has been cancelled.`,
+          type: 'order',
+          relatedId: req.params.id,
+          relatedType: 'order',
+        });
+      }
+
       res.json({ success: true, data: updated });
     } catch (err) {
       next(err);

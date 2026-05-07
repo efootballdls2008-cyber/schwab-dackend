@@ -2,7 +2,8 @@ const express = require('express');
 const { query, body, param } = require('express-validator');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireAdmin } = require('../middleware/auth');
+const createUserNotification = require('../utils/createUserNotification');
 
 const router = express.Router();
 router.use(authenticate);
@@ -64,6 +65,20 @@ router.post(
          entryPrice, exitPrice || null, profitLoss || null, plPct || null, status || 'pending']
       );
       const [[row]] = await pool.query('SELECT * FROM trade_history WHERE id = ?', [result.insertId]);
+
+      // Notify user of new trade
+      const plStr = profitLoss != null
+        ? ` · P&L: ${parseFloat(profitLoss) >= 0 ? '+' : ''}$${parseFloat(profitLoss).toFixed(2)}`
+        : '';
+      createUserNotification({
+        userId,
+        title: `Trade ${side} — ${pair}`,
+        message: `${executedBy || 'Manual'} ${side} ${amount} ${assetSymbol} on ${pair} at $${parseFloat(entryPrice).toFixed(2)}${plStr}`,
+        type: 'trade',
+        relatedId: result.insertId,
+        relatedType: 'trade_history',
+      });
+
       res.status(201).json({ success: true, data: row });
     } catch (err) {
       next(err);
@@ -72,3 +87,20 @@ router.post(
 );
 
 module.exports = router;
+
+// ── DELETE /tradeHistory/:id  (Admin only) ───────────────────
+router.delete(
+  '/:id',
+  requireAdmin,
+  [param('id').isInt({ min: 1 })],
+  validate,
+  async (req, res, next) => {
+    try {
+      const [result] = await pool.query('DELETE FROM trade_history WHERE id = ?', [req.params.id]);
+      if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Trade history not found' });
+      res.json({ success: true, message: 'Trade history deleted' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);

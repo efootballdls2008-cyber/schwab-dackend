@@ -10,6 +10,10 @@ router.use(authenticate);
 // ── GET /platformSettings ────────────────────────────────────
 router.get('/', async (req, res, next) => {
   try {
+    // Ensure a default row always exists
+    await pool.query(`
+      INSERT IGNORE INTO platform_settings (id) VALUES (1)
+    `);
     const [[row]] = await pool.query('SELECT * FROM platform_settings LIMIT 1');
     res.json({ success: true, data: row || null });
   } catch (err) {
@@ -34,6 +38,10 @@ router.patch(
     body('maintenanceMode').optional().isBoolean(),
     body('registrationEnabled').optional().isBoolean(),
     body('botTradingEnabled').optional().isBoolean(),
+    body('botDefaultStrategy').optional().trim().notEmpty(),
+    body('botDefaultRiskLevel').optional().trim().notEmpty(),
+    body('botDefaultTimeframe').optional().trim().notEmpty(),
+    body('botConfidenceThreshold').optional().isFloat({ min: 0, max: 100 }),
     body('supportEmail').optional().isEmail(),
   ],
   validate,
@@ -58,6 +66,8 @@ router.patch(
         welcomeBonusEnabled: 'welcome_bonus_enabled',
         botDefaultStrategy: 'bot_default_strategy',
         botDefaultRiskLevel: 'bot_default_risk_level',
+        botDefaultTimeframe: 'bot_default_timeframe',
+        botConfidenceThreshold: 'bot_confidence_threshold',
         botMaxOpenTrades: 'bot_max_open_trades',
         maxLoginAttempts: 'max_login_attempts',
         sessionTimeoutMinutes: 'session_timeout_minutes',
@@ -72,7 +82,10 @@ router.patch(
 
       const updates = {};
       for (const [k, v] of Object.entries(req.body)) {
-        const col = fieldMap[k] || k;
+        // Skip id and any key not in the fieldMap to prevent SQL errors
+        if (k === 'id' || k === 'updatedAt') continue;
+        const col = fieldMap[k];
+        if (!col) continue; // ignore unknown keys
         updates[col] = v;
       }
       if (!Object.keys(updates).length) {
