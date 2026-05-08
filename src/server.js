@@ -158,7 +158,7 @@ app.use('/platformAccounts',  platformAccountRoutes);
 app.use('/adminActions',      adminActionRoutes);
 app.use('/kyc',               kycRoutes);
 app.use('/ticker',            tickerRoutes);
-app.use('/notifications',        buildNotificationRoutes('notifications'));
+app.use('/notifications',        buildNotificationRoutes('user_notifications'));
 app.use('/userNotifications',    buildNotificationRoutes('user_notifications'));
 app.use('/adminNotifications',   adminNotifRouter);
 app.use('/notificationSettings', notificationSettingsRoutes);
