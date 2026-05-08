@@ -1,13 +1,13 @@
 /**
  * Email Service
- * Handles all email notifications for the platform
+ * Handles all email notifications for the platform using Resend
  */
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const pool = require('../db/pool');
 
 class EmailService {
   constructor() {
-    this.transporter = null;
+    this.resend = null;
     this.initialized = false;
     this.fromEmail = process.env.EMAIL_FROM || 'noreply@schwab-trading.com';
     this.fromName = process.env.EMAIL_FROM_NAME || 'Charles Schwab Trading Platform';
@@ -15,7 +15,7 @@ class EmailService {
   }
 
   /**
-   * Initialize email transporter
+   * Initialize Resend client
    */
   initialize() {
     if (this.initialized) return;
@@ -26,80 +26,54 @@ class EmailService {
       return;
     }
 
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      console.error('[EmailService] RESEND_API_KEY is not set — email will not be sent');
+      return;
+    }
+
     try {
-      // Support multiple email services
-      const emailService = process.env.EMAIL_SERVICE || 'smtp';
-
-      if (emailService === 'gmail') {
-        this.transporter = nodemailer.createTransport({
-          service: 'gmail',
-          auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASSWORD,
-          },
-        });
-      } else if (emailService === 'sendgrid') {
-        this.transporter = nodemailer.createTransport({
-          host: 'smtp.sendgrid.net',
-          port: 587,
-          auth: {
-            user: 'apikey',
-            pass: process.env.SENDGRID_API_KEY,
-          },
-        });
-      } else {
-        // Generic SMTP
-        this.transporter = nodemailer.createTransport({
-          host: process.env.SMTP_HOST,
-          port: parseInt(process.env.SMTP_PORT) || 587,
-          secure: process.env.SMTP_SECURE === 'true',
-          auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASSWORD,
-          },
-        });
-      }
-
+      this.resend = new Resend(apiKey);
       this.initialized = true;
-      console.log('[EmailService] Email service initialized successfully');
+      console.log('[EmailService] Resend email service initialized successfully');
     } catch (error) {
-      console.error('[EmailService] Failed to initialize:', error.message);
+      console.error('[EmailService] Failed to initialize Resend:', error.message);
     }
   }
 
   /**
-   * Send email with retry logic
+   * Send email via Resend
    */
   async sendEmail({ to, subject, html, text }) {
-    if (!this.initialized || !this.transporter) {
+    if (!this.initialized || !this.resend) {
       console.log('[EmailService] Email not sent - service not initialized');
       return { success: false, error: 'Email service not initialized' };
     }
 
     try {
-      const mailOptions = {
-        from: `"${this.fromName}" <${this.fromEmail}>`,
+      const { data, error } = await this.resend.emails.send({
+        from: `${this.fromName} <${this.fromEmail}>`,
         to,
         subject,
         html,
         text: text || this.stripHtml(html),
-      };
+      });
 
-      const info = await this.transporter.sendMail(mailOptions);
-      
-      // Log email sent
+      if (error) {
+        throw new Error(error.message || JSON.stringify(error));
+      }
+
       await this.logEmail({
         recipient: to,
         subject,
         status: 'sent',
-        messageId: info.messageId,
+        messageId: data.id,
       });
 
-      return { success: true, messageId: info.messageId };
+      return { success: true, messageId: data.id };
     } catch (error) {
       console.error('[EmailService] Failed to send email:', error.message);
-      
-      // Log failed email
+
       await this.logEmail({
         recipient: to,
         subject,
@@ -158,7 +132,7 @@ class EmailService {
     if (!user || !user.email) return;
 
     const html = this.getWelcomeEmailTemplate(user.first_name);
-    
+
     return await this.sendEmail({
       to: user.email,
       subject: 'Welcome to Charles Schwab Trading Platform! 🎉',
@@ -244,7 +218,7 @@ class EmailService {
    */
   async sendAdminNotification(title, message, type, relatedId = null) {
     const html = this.getAdminNotificationTemplate(title, message, type, relatedId);
-    
+
     return await this.sendEmail({
       to: this.adminEmail,
       subject: `[Admin Alert] ${title}`,
