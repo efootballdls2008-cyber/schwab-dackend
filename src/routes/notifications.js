@@ -6,17 +6,19 @@ const { authenticate, requireAdmin } = require('../middleware/auth');
 const socketService = require('../socket/socketService');
 
 // ── Helper: camelCase a DB row ────────────────────────────────
-function toCamel(row) {
+// NOTE: Only used for socket emissions which bypass res.json() and the
+// camelCase middleware. REST responses return raw rows and rely on the
+// middleware for key transformation.
+function toCamelAdmin(row) {
   if (!row) return row;
   return {
     id: row.id,
-    userId: row.user_id,
     title: row.title,
     message: row.message,
     type: row.type,
     isRead: !!row.is_read,
-    relatedId: row.related_id || null,
-    relatedType: row.related_type || null,
+    relatedId: row.related_id,
+    relatedType: row.related_type,
     createdAt: row.created_at,
   };
 }
@@ -36,7 +38,11 @@ function buildNotificationRoutes(table) {
       }
       await pool.query(`UPDATE ${table} SET is_read = 1 WHERE user_id = ? AND is_read = 0`, [userId]);
       // Emit socket event so other tabs update
-      socketService.emitToUser(userId, 'notification:allRead', {});
+      try {
+        socketService.emitToUser(userId, 'notification:allRead', {});
+      } catch (socketErr) {
+        console.error('[Socket Error]', socketErr);
+      }
       res.json({ success: true, message: 'All notifications marked as read' });
     } catch (err) {
       next(err);
@@ -61,9 +67,18 @@ function buildNotificationRoutes(table) {
     }
   });
 
-  // GET /?userId=:id  — list notifications for a user
+  // GET /?userId=:id  — list notifications for a user (admin can omit userId for bulk fetch)
   r.get('/', async (req, res, next) => {
     try {
+      // Admin bulk fetch — no userId required
+      if (!req.query.userId) {
+        if (req.user.role !== 'Admin') {
+          return res.status(403).json({ success: false, message: 'Admin access required' });
+        }
+        const [rows] = await pool.query(`SELECT * FROM ${table} ORDER BY created_at DESC`);
+        return res.json({ success: true, data: rows });
+      }
+
       const userId = parseInt(req.query.userId);
       if (isNaN(userId)) return res.status(422).json({ success: false, message: 'userId required' });
       if (req.user.role !== 'Admin' && req.user.id !== userId) {
@@ -135,6 +150,22 @@ function buildNotificationRoutes(table) {
     }
   });
 
+  // DELETE /  — admin bulk delete all notifications in this table
+  r.delete('/', requireAdmin, async (req, res, next) => {
+    if (req.body?.confirm !== true) {
+      return res.status(400).json({
+        success: false,
+        message: 'Bulk delete requires { "confirm": true } in the request body.',
+      });
+    }
+    try {
+      await pool.query(`DELETE FROM ${table}`);
+      res.json({ success: true, message: 'All notifications deleted' });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   // DELETE /:id  — user can delete their own; admin can delete any
   r.delete('/:id', [param('id').isInt({ min: 1 })], validate, async (req, res, next) => {
     try {
@@ -146,7 +177,11 @@ function buildNotificationRoutes(table) {
       const [result] = await pool.query(`DELETE FROM ${table} WHERE id = ?`, [req.params.id]);
       if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Notification not found' });
       // Emit to the user's socket room
-      socketService.emitToUser(row.user_id, 'notification:deleted', { id: parseInt(req.params.id) });
+      try {
+        socketService.emitToUser(row.user_id, 'notification:deleted', { id: parseInt(req.params.id) });
+      } catch (socketErr) {
+        console.error('[Socket Error]', socketErr);
+      }
       res.json({ success: true, message: 'Notification deleted' });
     } catch (err) {
       next(err);
@@ -219,7 +254,11 @@ adminNotifRouter.post(
       );
       const [[row]] = await pool.query('SELECT * FROM admin_notifications WHERE id = ?', [result.insertId]);
       // Emit real-time to all connected admins
-      socketService.emitAdminNotification(toCamelAdmin(row));
+      try {
+        socketService.emitAdminNotification(toCamelAdmin(row));
+      } catch (socketErr) {
+        console.error('[Socket Error]', socketErr);
+      }
       res.status(201).json({ success: true, data: row });
     } catch (err) {
       next(err);
@@ -231,7 +270,11 @@ adminNotifRouter.post(
 adminNotifRouter.patch('/mark-all-read', async (req, res, next) => {
   try {
     await pool.query('UPDATE admin_notifications SET is_read = 1 WHERE is_read = 0');
-    socketService.emitToAdmins('notification:allRead', {});
+    try {
+      socketService.emitToAdmins('notification:allRead', {});
+    } catch (socketErr) {
+      console.error('[Socket Error]', socketErr);
+    }
     res.json({ success: true, message: 'All notifications marked as read' });
   } catch (err) {
     next(err);
@@ -247,7 +290,11 @@ adminNotifRouter.patch('/:id', [param('id').isInt({ min: 1 })], validate, async 
     await pool.query('UPDATE admin_notifications SET is_read = ? WHERE id = ?', [isRead ? 1 : 0, req.params.id]);
     const [[updated]] = await pool.query('SELECT * FROM admin_notifications WHERE id = ?', [req.params.id]);
     // Broadcast update to all admins
-    socketService.emitToAdmins('notification:updated', toCamelAdmin(updated));
+    try {
+      socketService.emitToAdmins('notification:updated', toCamelAdmin(updated));
+    } catch (socketErr) {
+      console.error('[Socket Error]', socketErr);
+    }
     res.json({ success: true, data: updated });
   } catch (err) {
     next(err);
@@ -259,7 +306,11 @@ adminNotifRouter.delete('/:id', [param('id').isInt({ min: 1 })], validate, async
   try {
     const [result] = await pool.query('DELETE FROM admin_notifications WHERE id = ?', [req.params.id]);
     if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Notification not found' });
-    socketService.emitToAdmins('notification:deleted', { id: parseInt(req.params.id) });
+    try {
+      socketService.emitToAdmins('notification:deleted', { id: parseInt(req.params.id) });
+    } catch (socketErr) {
+      console.error('[Socket Error]', socketErr);
+    }
     res.json({ success: true, message: 'Notification deleted' });
   } catch (err) {
     next(err);
@@ -268,27 +319,23 @@ adminNotifRouter.delete('/:id', [param('id').isInt({ min: 1 })], validate, async
 
 // DELETE /adminNotifications  — delete all
 adminNotifRouter.delete('/', async (req, res, next) => {
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({
+      success: false,
+      message: 'Bulk delete requires { "confirm": true } in the request body.',
+    });
+  }
   try {
     await pool.query('DELETE FROM admin_notifications');
-    socketService.emitToAdmins('notification:allDeleted', {});
+    try {
+      socketService.emitToAdmins('notification:allDeleted', {});
+    } catch (socketErr) {
+      console.error('[Socket Error]', socketErr);
+    }
     res.json({ success: true, message: 'All notifications deleted' });
   } catch (err) {
     next(err);
   }
 });
-
-function toCamelAdmin(row) {
-  if (!row) return row;
-  return {
-    id: row.id,
-    title: row.title,
-    message: row.message,
-    type: row.type,
-    isRead: !!row.is_read,
-    relatedId: row.related_id,
-    relatedType: row.related_type,
-    createdAt: row.created_at,
-  };
-}
 
 module.exports = { buildNotificationRoutes, adminNotifRouter, toCamelAdmin };

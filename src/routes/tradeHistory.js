@@ -11,11 +11,19 @@ router.use(authenticate);
 // ── GET /tradeHistory?userId=:id ─────────────────────────────
 router.get(
   '/',
-  [query('userId').isInt({ min: 1 }).withMessage('userId required')],
-  validate,
   async (req, res, next) => {
     try {
+      // Admin bulk fetch — no userId required
+      if (!req.query.userId) {
+        if (req.user.role !== 'Admin') {
+          return res.status(403).json({ success: false, message: 'Admin access required' });
+        }
+        const [rows] = await pool.query('SELECT * FROM trade_history ORDER BY created_at DESC');
+        return res.json({ success: true, data: rows });
+      }
+
       const userId = parseInt(req.query.userId);
+      if (isNaN(userId)) return res.status(422).json({ success: false, message: 'Invalid userId' });
       if (req.user.role !== 'Admin' && req.user.id !== userId) {
         return res.status(403).json({ success: false, message: 'Forbidden' });
       }
@@ -86,7 +94,21 @@ router.post(
   }
 );
 
-module.exports = router;
+// ── DELETE /tradeHistory  (Admin only — delete ALL) ──────────
+router.delete('/', requireAdmin, async (req, res, next) => {
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({
+      success: false,
+      message: 'Bulk delete requires { "confirm": true } in the request body.',
+    });
+  }
+  try {
+    await pool.query('DELETE FROM trade_history');
+    res.json({ success: true, message: 'All trade history deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // ── DELETE /tradeHistory/:id  (Admin only) ───────────────────
 router.delete(
@@ -104,3 +126,5 @@ router.delete(
     }
   }
 );
+
+module.exports = router;

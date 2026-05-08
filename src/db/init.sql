@@ -64,15 +64,23 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 );
 
 -- ── Platform Accounts ────────────────────────────────────────
+-- payment_method: bank_transfer | credit_card | wire_transfer | crypto
+-- assigned_to:    deposit | buy_crypto | buy_stock | all
 CREATE TABLE IF NOT EXISTS platform_accounts (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   account_name    VARCHAR(255) NOT NULL,
-  bank_name       VARCHAR(255) NOT NULL,
-  account_number  VARCHAR(100) NOT NULL,
+  payment_method  ENUM('bank_transfer','credit_card','wire_transfer','crypto') NOT NULL DEFAULT 'bank_transfer',
+  bank_name       VARCHAR(255) DEFAULT NULL,
+  account_number  VARCHAR(100) DEFAULT NULL,
   routing_number  VARCHAR(100) DEFAULT NULL,
   account_type    VARCHAR(100) DEFAULT NULL,
   swift_code      VARCHAR(50) DEFAULT NULL,
+  bank_address    VARCHAR(500) DEFAULT NULL,
+  my_address      VARCHAR(500) DEFAULT NULL,
+  wallet_address  VARCHAR(500) DEFAULT NULL,
+  network         VARCHAR(100) DEFAULT NULL,
   is_default      TINYINT(1) NOT NULL DEFAULT 0,
+  assigned_to     ENUM('deposit','buy_crypto','buy_stock','all') NOT NULL DEFAULT 'deposit',
   status          ENUM('active','inactive') NOT NULL DEFAULT 'active',
   created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -152,39 +160,47 @@ CREATE TABLE IF NOT EXISTS trade_history (
 
 -- ── Bot Trades ───────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS bot_trades (
-  id          VARCHAR(100) PRIMARY KEY,
-  user_id     INT NOT NULL,
-  pair        VARCHAR(50) NOT NULL,
-  side        ENUM('buy','sell') NOT NULL,
-  entry_price DECIMAL(20,8) NOT NULL,
-  exit_price  DECIMAL(20,8) DEFAULT NULL,
-  amount      DECIMAL(20,10) NOT NULL,
-  pnl         DECIMAL(20,8) NOT NULL DEFAULT 0,
-  pnl_pct     DECIMAL(10,4) NOT NULL DEFAULT 0,
-  strategy    VARCHAR(100) DEFAULT NULL,
-  `signal`    TEXT DEFAULT NULL,
-  opened_at   DATETIME DEFAULT NULL,
-  closed_at   DATETIME DEFAULT NULL,
-  status      ENUM('open','closed') NOT NULL DEFAULT 'open',
+  id                    VARCHAR(100) PRIMARY KEY,
+  user_id               INT NOT NULL,
+  pair                  VARCHAR(50) NOT NULL,
+  side                  ENUM('buy','sell') NOT NULL,
+  entry_price           DECIMAL(20,8) NOT NULL,
+  exit_price            DECIMAL(20,8) DEFAULT NULL,
+  amount                DECIMAL(20,10) NOT NULL,
+  pnl                   DECIMAL(20,8) NOT NULL DEFAULT 0,
+  pnl_pct               DECIMAL(10,4) NOT NULL DEFAULT 0,
+  final_pnl             DECIMAL(20,8) DEFAULT NULL,
+  display_pnl           DECIMAL(20,8) DEFAULT NULL,
+  expected_profit       DECIMAL(20,8) DEFAULT NULL,
+  trade_duration_seconds INT DEFAULT NULL,
+  strategy              VARCHAR(100) DEFAULT NULL,
+  `signal`              TEXT DEFAULT NULL,
+  timeframe             VARCHAR(20) DEFAULT '1h',
+  close_reason          VARCHAR(50) DEFAULT NULL,
+  opened_at             DATETIME DEFAULT NULL,
+  closed_at             DATETIME DEFAULT NULL,
+  status                ENUM('open','closed') NOT NULL DEFAULT 'open',
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- ── Bot Settings ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS bot_settings (
-  id                  INT AUTO_INCREMENT PRIMARY KEY,
-  user_id             INT NOT NULL UNIQUE,
-  running             TINYINT(1) NOT NULL DEFAULT 0,
-  strategy            VARCHAR(100) DEFAULT 'AI Scalper Pro',
-  risk_level          VARCHAR(50) DEFAULT 'Moderate',
-  pair                VARCHAR(50) DEFAULT 'BTC/USDT',
-  timeframe           VARCHAR(20) DEFAULT '1h',
-  take_profit         DECIMAL(10,4) DEFAULT 10,
-  stop_loss           DECIMAL(10,4) DEFAULT 3,
-  trailing_stop       DECIMAL(10,4) DEFAULT 2,
-  auto_reinvest       TINYINT(1) NOT NULL DEFAULT 1,
-  max_open_trades     INT NOT NULL DEFAULT 3,
-  daily_profit_target DECIMAL(10,4) DEFAULT 15,
-  updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  id                    INT AUTO_INCREMENT PRIMARY KEY,
+  user_id               INT NOT NULL UNIQUE,
+  running               TINYINT(1) NOT NULL DEFAULT 0,
+  strategy              VARCHAR(100) DEFAULT 'AI Scalper Pro',
+  risk_level            VARCHAR(50) DEFAULT 'Moderate',
+  pair                  VARCHAR(50) DEFAULT 'BTC/USDT',
+  timeframe             VARCHAR(20) DEFAULT '1h',
+  take_profit           DECIMAL(10,4) DEFAULT 10,
+  stop_loss             DECIMAL(10,4) DEFAULT 3,
+  trailing_stop         DECIMAL(10,4) DEFAULT 2,
+  auto_reinvest         TINYINT(1) NOT NULL DEFAULT 1,
+  max_open_trades       INT NOT NULL DEFAULT 3,
+  daily_profit_target   DECIMAL(10,4) DEFAULT 15,
+  confidence_threshold  DECIMAL(5,2) NOT NULL DEFAULT 45.00,
+  trade_duration_seconds INT DEFAULT NULL,
+  updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -200,6 +216,7 @@ CREATE TABLE IF NOT EXISTS market_stats (
 );
 
 -- ── Deposits / Withdrawals ───────────────────────────────────
+-- tx_id is nullable at submission time — assigned by payment processor or admin on approval
 CREATE TABLE IF NOT EXISTS deposits (
   id                INT AUTO_INCREMENT PRIMARY KEY,
   user_id           INT NOT NULL,
@@ -210,7 +227,7 @@ CREATE TABLE IF NOT EXISTS deposits (
   status            ENUM('pending','completed','rejected') NOT NULL DEFAULT 'pending',
   date              VARCHAR(50) DEFAULT NULL,
   time              VARCHAR(20) DEFAULT NULL,
-  tx_id             VARCHAR(100) NOT NULL UNIQUE,
+  tx_id             VARCHAR(100) DEFAULT NULL,
   note              TEXT DEFAULT NULL,
   rejection_reason  TEXT DEFAULT NULL,
   created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -277,16 +294,21 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 -- ── User Notifications ───────────────────────────────────────
+-- Extended schema with category, priority, metadata to match notificationService.js
 CREATE TABLE IF NOT EXISTS user_notifications (
   id            INT AUTO_INCREMENT PRIMARY KEY,
   user_id       INT NOT NULL,
   title         VARCHAR(255) NOT NULL,
   message       TEXT NOT NULL,
   type          VARCHAR(50) DEFAULT 'info',
+  category      VARCHAR(50) DEFAULT 'system_alerts',
+  priority      ENUM('low','medium','high','urgent') NOT NULL DEFAULT 'medium',
   is_read       TINYINT(1) NOT NULL DEFAULT 0,
   related_id    VARCHAR(100) DEFAULT NULL,
   related_type  VARCHAR(100) DEFAULT NULL,
+  metadata      JSON DEFAULT NULL,
   created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -320,3 +342,43 @@ CREATE TABLE IF NOT EXISTS admin_actions (
   timestamp       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+-- ── Admin Notifications ──────────────────────────────────────
+-- Extended schema with priority, user_id, metadata to match notificationService.js
+CREATE TABLE IF NOT EXISTS admin_notifications (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  title         VARCHAR(255) NOT NULL,
+  message       TEXT NOT NULL,
+  type          VARCHAR(50) DEFAULT 'info',
+  priority      ENUM('low','medium','high','urgent') NOT NULL DEFAULT 'medium',
+  is_read       TINYINT(1) NOT NULL DEFAULT 0,
+  related_id    VARCHAR(100) DEFAULT NULL,
+  related_type  VARCHAR(100) DEFAULT NULL,
+  user_id       INT DEFAULT NULL,
+  metadata      JSON DEFAULT NULL,
+  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- ── Bot Strategy Counters ────────────────────────────────────
+-- Persists win/loss cycle counters so they survive server restarts (issue #16)
+CREATE TABLE IF NOT EXISTS bot_strategy_counters (
+  user_id   INT          NOT NULL,
+  strategy  VARCHAR(100) NOT NULL,
+  wins      INT          NOT NULL DEFAULT 0,
+  losses    INT          NOT NULL DEFAULT 0,
+  total     INT          NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, strategy),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- ── Migration: Add new columns to existing tables ────────────
+-- Run these ALTER statements if upgrading an existing database:
+-- ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS final_pnl DECIMAL(20,8) DEFAULT NULL;
+-- ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS display_pnl DECIMAL(20,8) DEFAULT NULL;
+-- ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS expected_profit DECIMAL(20,8) DEFAULT NULL;
+-- ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS trade_duration_seconds INT DEFAULT NULL;
+-- ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS timeframe VARCHAR(20) DEFAULT '1h';
+-- ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS close_reason VARCHAR(50) DEFAULT NULL;
+-- ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS confidence_threshold DECIMAL(5,2) NOT NULL DEFAULT 45.00;
+-- ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS trade_duration_seconds INT DEFAULT NULL;

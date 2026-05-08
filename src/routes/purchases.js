@@ -69,7 +69,7 @@ router.post(
       createAdminNotification({
         title: 'New Buy Order',
         message: `${userName} placed a buy order for ${quantity} ${symbol} (${name}) at $${parseFloat(price).toFixed(2)} each.`,
-        type: 'order',
+        type: assetType === 'crypto' ? 'buy_crypto' : 'buy_stocks',
         relatedId: result.insertId,
         relatedType: 'purchase',
       });
@@ -148,7 +148,21 @@ router.patch(
   }
 );
 
-module.exports = router;
+// ── DELETE /purchases  (Admin only — delete ALL) ─────────────
+router.delete('/', requireAdmin, async (req, res, next) => {
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({
+      success: false,
+      message: 'Bulk delete requires { "confirm": true } in the request body.',
+    });
+  }
+  try {
+    await pool.query('DELETE FROM purchases');
+    res.json({ success: true, message: 'All purchases deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // ── DELETE /purchases/:id  (Admin only) ──────────────────────
 router.delete(
@@ -166,3 +180,5 @@ router.delete(
     }
   }
 );
+
+module.exports = router;

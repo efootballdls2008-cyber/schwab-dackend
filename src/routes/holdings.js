@@ -3,6 +3,7 @@ const { query, body, param } = require('express-validator');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
 const { authenticate, requireAdmin } = require('../middleware/auth');
+const { buildUpdate, HOLDINGS_WHITELIST, HOLDINGS_FIELD_MAP } = require('../utils/buildUpdate');
 
 const router = express.Router();
 router.use(authenticate);
@@ -98,18 +99,12 @@ router.patch(
         return res.status(403).json({ success: false, message: 'Forbidden' });
       }
 
-      const fieldMap = { avgBuyPrice: 'avg_buy_price', currentPrice: 'current_price' };
-      const allowed = ['quantity', 'avg_buy_price', 'current_price', 'color'];
-      const updates = {};
-      for (const [k, v] of Object.entries(req.body)) {
-        const col = fieldMap[k] || k;
-        if (allowed.includes(col)) updates[col] = v;
-      }
-      if (!Object.keys(updates).length) {
+      const result = buildUpdate(req.body, HOLDINGS_WHITELIST, HOLDINGS_FIELD_MAP);
+      if (!result) {
         return res.status(400).json({ success: false, message: 'No valid fields' });
       }
-      const set = Object.keys(updates).map((k) => `\`${k}\` = ?`).join(', ');
-      await pool.query(`UPDATE holdings SET ${set} WHERE id = ?`, [...Object.values(updates), req.params.id]);
+      const { setClauses: set, values } = result;
+      await pool.query(`UPDATE holdings SET ${set} WHERE id = ?`, [...values, req.params.id]);
       const [[updated]] = await pool.query('SELECT * FROM holdings WHERE id = ?', [req.params.id]);
       res.json({ success: true, data: updated });
     } catch (err) {
@@ -118,7 +113,21 @@ router.patch(
   }
 );
 
-module.exports = router;
+// ── DELETE /holdings  (Admin only — delete ALL) ──────────────
+router.delete('/', requireAdmin, async (req, res, next) => {
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({
+      success: false,
+      message: 'Bulk delete requires { "confirm": true } in the request body.',
+    });
+  }
+  try {
+    await pool.query('DELETE FROM holdings');
+    res.json({ success: true, message: 'All holdings deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // ── DELETE /holdings/:id  (Admin only) ───────────────────────
 router.delete(
@@ -136,3 +145,5 @@ router.delete(
     }
   }
 );
+
+module.exports = router;

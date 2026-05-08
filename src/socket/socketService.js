@@ -86,4 +86,14 @@ function emitToUser(userId, event, payload) {
   _io.to(`user:${userId}`).emit(event, payload);
 }
 
-module.exports = { init, emitAdminNotification, emitToAdmins, emitUserNotification, emitToUser };
+/**
+ * Emit a bot trade event to all admins.
+ * @param {string} event  - e.g. 'botTrade:opened', 'botTrade:closed', 'botTrade:updated'
+ * @param {object} payload
+ */
+function emitBotTradeUpdate(event, payload) {
+  if (!_io) return;
+  _io.to('admins').emit(event, payload);
+}
+
+module.exports = { init, emitAdminNotification, emitToAdmins, emitUserNotification, emitToUser, emitBotTradeUpdate };

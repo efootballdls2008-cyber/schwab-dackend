@@ -10,11 +10,22 @@ router.use(authenticate);
 // ── GET /transactions?userId=:id ─────────────────────────────
 router.get(
   '/',
-  [query('userId').isInt({ min: 1 }).withMessage('userId required')],
-  validate,
   async (req, res, next) => {
     try {
+      // Admin with no userId filter → return all transactions
+      if (!req.query.userId) {
+        if (req.user.role !== 'Admin') {
+          return res.status(403).json({ success: false, message: 'Admin access required' });
+        }
+        const [rows] = await pool.query('SELECT * FROM transactions ORDER BY created_at DESC');
+        return res.json({ success: true, data: rows });
+      }
+
+      // userId provided → ownership check
       const userId = parseInt(req.query.userId);
+      if (isNaN(userId)) {
+        return res.status(422).json({ success: false, message: 'Invalid userId' });
+      }
       if (req.user.role !== 'Admin' && req.user.id !== userId) {
         return res.status(403).json({ success: false, message: 'Forbidden' });
       }

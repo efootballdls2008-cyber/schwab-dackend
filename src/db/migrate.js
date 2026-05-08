@@ -1,31 +1,41 @@
 /**
- * Run this once to create all tables:
- *   node src/db/migrate.js
+ * Migration script — adds new columns for bot trading system update.
+ * Run once: node src/db/migrate.js
  */
 require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
-const mysql = require('mysql2/promise');
+const pool = require('./pool');
 
 async function migrate() {
-  const conn = await mysql.createConnection({
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT) || 3306,
-    user: process.env.DB_USER || 'schwab_user',
-    password: process.env.DB_PASSWORD || 'schwab_pass',
-    database: process.env.DB_NAME || 'railway',
-    multipleStatements: true,
-  });
+  const migrations = [
+    // bot_trades new columns
+    `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS final_pnl DECIMAL(20,8) DEFAULT NULL`,
+    `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS display_pnl DECIMAL(20,8) DEFAULT NULL`,
+    `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS expected_profit DECIMAL(20,8) DEFAULT NULL`,
+    `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS trade_duration_seconds INT DEFAULT NULL`,
+    `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS timeframe VARCHAR(20) DEFAULT '1h'`,
+    `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS close_reason VARCHAR(50) DEFAULT NULL`,
+    // bot_settings new columns
+    `ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS confidence_threshold DECIMAL(5,2) NOT NULL DEFAULT 45.00`,
+    `ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS trade_duration_seconds INT DEFAULT NULL`,
+    // admin_notifications — ensure bot_trade type is supported (type is VARCHAR so no enum change needed)
+  ];
 
-  let sql = fs.readFileSync(path.join(__dirname, 'init.sql'), 'utf8');
-  // Strip the CREATE DATABASE / USE statements so tables go into the connected DB
-  sql = sql.replace(/^CREATE DATABASE.*?;/gim, '').replace(/^USE\s+\S+;/gim, '');
-  await conn.query(sql);
-  console.log('[migrate] All tables created successfully.');
-  await conn.end();
+  console.log('[migrate] Running migrations...');
+  for (const sql of migrations) {
+    try {
+      await pool.query(sql);
+      console.log(`[migrate] OK: ${sql.slice(0, 80)}...`);
+    } catch (err) {
+      // MySQL 5.x doesn't support IF NOT EXISTS on ALTER — ignore duplicate column errors
+      if (err.code === 'ER_DUP_FIELDNAME') {
+        console.log(`[migrate] SKIP (already exists): ${sql.slice(0, 60)}...`);
+      } else {
+        console.error(`[migrate] ERROR: ${err.message}`);
+      }
+    }
+  }
+  console.log('[migrate] Done.');
+  process.exit(0);
 }
 
-migrate().catch((err) => {
-  console.error('[migrate] Error:', err.message);
-  process.exit(1);
-});
+migrate();

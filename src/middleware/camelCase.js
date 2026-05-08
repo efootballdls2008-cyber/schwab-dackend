@@ -34,10 +34,15 @@ function transformKeys(value) {
 /**
  * Intercepts res.json() and transforms the payload keys to camelCase
  * while coercing MySQL numeric strings to JS numbers.
+ * Skips transformation for error responses (4xx/5xx) so error messages
+ * containing snake_case words are never silently mutated.
  */
 function camelCaseResponse(req, res, next) {
   const originalJson = res.json.bind(res)
   res.json = function (body) {
+    if (res.statusCode >= 400) {
+      return originalJson(body)
+    }
     return originalJson(transformKeys(body))
   }
   next()

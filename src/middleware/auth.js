@@ -1,6 +1,13 @@
 const jwt = require('jsonwebtoken');
 
 /**
+ * Helper function to check if user has admin role (case-insensitive)
+ */
+function isAdmin(user) {
+  return user && (user.role === 'Admin' || user.role === 'admin');
+}
+
+/**
  * Verifies Bearer JWT. Attaches decoded payload to req.user.
  */
 function authenticate(req, res, next) {
@@ -23,10 +30,10 @@ function authenticate(req, res, next) {
  * Requires the authenticated user to have the Admin role.
  */
 function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== 'Admin') {
+  if (!isAdmin(req.user)) {
     return res.status(403).json({ success: false, message: 'Admin access required' });
   }
   next();
 }
 
-module.exports = { authenticate, requireAdmin };
+module.exports = { authenticate, requireAdmin, isAdmin };

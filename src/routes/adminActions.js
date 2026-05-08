@@ -42,7 +42,21 @@ router.post(
   }
 );
 
-module.exports = router;
+// ── DELETE /adminActions  (Admin only — delete ALL) ──────────
+router.delete('/', async (req, res, next) => {
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({
+      success: false,
+      message: 'Bulk delete requires { "confirm": true } in the request body.',
+    });
+  }
+  try {
+    await pool.query('DELETE FROM admin_actions');
+    res.json({ success: true, message: 'All admin actions deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // ── DELETE /adminActions/:id  (Admin only) ───────────────────
 router.delete(
@@ -58,3 +72,5 @@ router.delete(
     }
   }
 );
+
+module.exports = router;
