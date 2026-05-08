@@ -42,7 +42,42 @@ function fetchFromBinance(symbol) {
   return promise;
 }
 
-// No auth required — ticker data is public market info.
+// ── Static fallback prices (used when Binance is geo-blocked on the server) ──
+// These are approximate values — the frontend will show them as "offline" prices
+// until a live feed is available. Update periodically if needed.
+const FALLBACK_PRICES = {
+  BTCUSDT:  { lastPrice: '67420.00', priceChangePercent: '1.25',  volume: '28500.123' },
+  ETHUSDT:  { lastPrice: '3520.00',  priceChangePercent: '2.10',  volume: '185000.456' },
+  SOLUSDT:  { lastPrice: '178.50',   priceChangePercent: '-0.85', volume: '4200000.789' },
+  BNBUSDT:  { lastPrice: '608.00',   priceChangePercent: '0.55',  volume: '1250000.321' },
+  XRPUSDT:  { lastPrice: '0.5820',   priceChangePercent: '1.80',  volume: '95000000.654' },
+  ADAUSDT:  { lastPrice: '0.4510',   priceChangePercent: '-1.20', volume: '75000000.987' },
+  MATICUSDT:{ lastPrice: '0.8920',   priceChangePercent: '3.40',  volume: '55000000.123' },
+  LINKUSDT: { lastPrice: '18.75',    priceChangePercent: '2.90',  volume: '8500000.456' },
+  AVAXUSDT: { lastPrice: '38.20',    priceChangePercent: '-0.60', volume: '3200000.789' },
+  DOTUSDT:  { lastPrice: '7.85',     priceChangePercent: '1.10',  volume: '12000000.321' },
+};
+
+function buildFallbackResponse(symbol) {
+  const base = FALLBACK_PRICES[symbol];
+  if (!base) return null;
+  return JSON.stringify({
+    symbol,
+    lastPrice: base.lastPrice,
+    priceChange: '0.00',
+    priceChangePercent: base.priceChangePercent,
+    highPrice: base.lastPrice,
+    lowPrice: base.lastPrice,
+    volume: base.volume,
+    quoteVolume: base.volume,
+    openPrice: base.lastPrice,
+    prevClosePrice: base.lastPrice,
+    count: 0,
+    _fallback: true,
+  });
+}
+
+
 // This proxy avoids CORS and geo-restrictions when the frontend
 // calls Binance directly from the browser.
 
@@ -78,6 +113,19 @@ router.get('/:symbol', async (req, res, next) => {
       tickerCache.set(symbol, { data, status, expiresAt: Date.now() + TICKER_CACHE_TTL_MS });
     }
 
+    // If Binance is geo-blocked (451) or unavailable, serve fallback
+    if (status !== 200) {
+      const staleCache = tickerCache.get(symbol);
+      if (staleCache) {
+        return res.status(200).set('Content-Type', 'application/json').set('X-Cache', 'STALE').send(staleCache.data);
+      }
+      const fallback = buildFallbackResponse(symbol);
+      if (fallback) {
+        return res.status(200).set('Content-Type', 'application/json').set('X-Cache', 'FALLBACK').send(fallback);
+      }
+      return res.status(status).set('Content-Type', 'application/json').send(data);
+    }
+
     res
       .status(status)
       .set('Content-Type', 'application/json')
@@ -88,21 +136,17 @@ router.get('/:symbol', async (req, res, next) => {
     if (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT') {
       console.error('[Ticker API] Network error:', err.message);
       
-      // Try to serve stale cache if available
+      // Try stale cache first
       const staleCache = tickerCache.get(req.params.symbol.toUpperCase());
       if (staleCache) {
-        return res
-          .status(200)
-          .set('Content-Type', 'application/json')
-          .set('X-Cache', 'STALE')
-          .send(staleCache.data);
+        return res.status(200).set('Content-Type', 'application/json').set('X-Cache', 'STALE').send(staleCache.data);
       }
-      
-      // No cache available, return error
-      return res.status(503).json({ 
-        success: false, 
-        message: 'Market data temporarily unavailable. Please try again later.' 
-      });
+      // Then try static fallback
+      const fallback = buildFallbackResponse(req.params.symbol.toUpperCase());
+      if (fallback) {
+        return res.status(200).set('Content-Type', 'application/json').set('X-Cache', 'FALLBACK').send(fallback);
+      }
+      return res.status(503).json({ success: false, message: 'Market data temporarily unavailable.' });
     }
     next(err);
   }
