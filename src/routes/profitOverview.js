@@ -1,5 +1,5 @@
 const express = require('express');
-const { query, body, param } = require('express-validator');
+const { body, param } = require('express-validator');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
 const { authenticate, requireAdmin } = require('../middleware/auth');
@@ -8,33 +8,30 @@ const router = express.Router();
 router.use(authenticate);
 
 // ── GET /profitOverview?userId=:id ───────────────────────────
-router.get(
-  '/',
-  async (req, res, next) => {
-    try {
-      // Admin bulk fetch — no userId required
-      if (!req.query.userId) {
-        if (req.user.role !== 'Admin') {
-          return res.status(403).json({ success: false, message: 'Admin access required' });
-        }
-        const [rows] = await pool.query('SELECT * FROM profit_overview ORDER BY user_id');
-        const parsed = rows.map((r) => ({ ...r, data: typeof r.data === 'string' ? JSON.parse(r.data) : r.data }));
-        return res.json({ success: true, data: parsed });
+router.get('/', async (req, res, next) => {
+  try {
+    // Admin bulk fetch — no userId required
+    if (!req.query.userId) {
+      if (req.user.role !== 'Admin') {
+        return res.status(403).json({ success: false, message: 'Admin access required' });
       }
-
-      const userId = parseInt(req.query.userId);
-      if (isNaN(userId)) return res.status(422).json({ success: false, message: 'Invalid userId' });
-      if (req.user.role !== 'Admin' && req.user.id !== userId) {
-        return res.status(403).json({ success: false, message: 'Forbidden' });
-      }
-      const [rows] = await pool.query('SELECT * FROM profit_overview WHERE user_id = ?', [userId]);
+      const [rows] = await pool.query('SELECT * FROM profit_overview ORDER BY user_id');
       const parsed = rows.map((r) => ({ ...r, data: typeof r.data === 'string' ? JSON.parse(r.data) : r.data }));
-      res.json({ success: true, data: parsed });
-    } catch (err) {
-      next(err);
+      return res.json({ success: true, data: parsed });
     }
+
+    const userId = parseInt(req.query.userId);
+    if (isNaN(userId)) return res.status(422).json({ success: false, message: 'Invalid userId' });
+    if (req.user.role !== 'Admin' && req.user.id !== userId) {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
+    }
+    const [rows] = await pool.query('SELECT * FROM profit_overview WHERE user_id = ?', [userId]);
+    const parsed = rows.map((r) => ({ ...r, data: typeof r.data === 'string' ? JSON.parse(r.data) : r.data }));
+    res.json({ success: true, data: parsed });
+  } catch (err) {
+    next(err);
   }
-);
+});
 
 // ── POST /profitOverview ─────────────────────────────────────
 router.post(
@@ -63,8 +60,6 @@ router.post(
   }
 );
 
-module.exports = router;
-
 // ── DELETE /profitOverview  (Admin only — delete ALL) ────────
 router.delete('/', requireAdmin, async (req, res, next) => {
   if (req.body?.confirm !== true) {
@@ -90,10 +85,14 @@ router.delete(
   async (req, res, next) => {
     try {
       const [result] = await pool.query('DELETE FROM profit_overview WHERE id = ?', [req.params.id]);
-      if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Profit overview not found' });
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ success: false, message: 'Profit overview not found' });
+      }
       res.json({ success: true, message: 'Profit overview deleted' });
     } catch (err) {
       next(err);
     }
   }
 );
+
+module.exports = router;

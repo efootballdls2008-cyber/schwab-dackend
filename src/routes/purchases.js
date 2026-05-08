@@ -69,7 +69,7 @@ router.post(
       createAdminNotification({
         title: 'New Buy Order',
         message: `${userName} placed a buy order for ${quantity} ${symbol} (${name}) at $${parseFloat(price).toFixed(2)} each.`,
-        type: assetType === 'crypto' ? 'buy_crypto' : 'buy_stocks',
+        type: type === 'buy_crypto' ? 'buy_crypto' : 'buy_stocks',
         relatedId: result.insertId,
         relatedType: 'purchase',
       });
