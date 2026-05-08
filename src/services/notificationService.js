@@ -54,8 +54,9 @@ class NotificationService {
 
       return null;
     } catch (error) {
-      console.error('[NotificationService] Error creating user notification:', error);
-      throw error;
+      // Non-fatal — notification failure must never crash the calling route
+      console.error('[NotificationService] Error creating user notification:', error.message);
+      return null;
     }
   }
 
@@ -90,8 +91,9 @@ class NotificationService {
 
       return notification;
     } catch (error) {
-      console.error('[NotificationService] Error creating admin notification:', error);
-      throw error;
+      // Non-fatal — admin notification failure must never crash the calling route
+      console.error('[NotificationService] Error creating admin notification:', error.message);
+      return null;
     }
   }
 
