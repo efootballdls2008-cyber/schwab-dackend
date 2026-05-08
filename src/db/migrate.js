@@ -114,6 +114,17 @@ async function migrate() {
       PRIMARY KEY (user_id, strategy),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )`,
+
+    // Email send log — required by emailService.logEmail()
+    `CREATE TABLE IF NOT EXISTS email_logs (
+      id            INT AUTO_INCREMENT PRIMARY KEY,
+      recipient     VARCHAR(255) NOT NULL,
+      subject       VARCHAR(500) NOT NULL,
+      status        ENUM('sent','failed') NOT NULL DEFAULT 'sent',
+      message_id    VARCHAR(255) DEFAULT NULL,
+      error_message TEXT DEFAULT NULL,
+      created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
   ];
 
   console.log('[migrate] Running ALTER migrations...');

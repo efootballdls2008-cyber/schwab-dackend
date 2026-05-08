@@ -98,7 +98,8 @@ class EmailService {
         [recipient, subject, status, messageId, error]
       );
     } catch (err) {
-      console.error('[EmailService] Failed to log email:', err.message);
+      // Non-fatal — log to console but never crash the email send path
+      console.warn('[EmailService] Could not log email (table may be missing):', err.message);
     }
   }
 
