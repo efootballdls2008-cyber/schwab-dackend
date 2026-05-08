@@ -316,12 +316,43 @@ async function runMigrations() {
   console.log('[migrate] Auto-migration complete.');
 }
 
+// ── Seed default admin account ────────────────────────────────
+// Creates the admin account from env vars if no Admin user exists yet.
+async function seedAdmin() {
+  const email    = process.env.ADMIN_SEED_EMAIL;
+  const password = process.env.ADMIN_SEED_PASSWORD;
+  if (!email || !password) return; // nothing to seed
+
+  try {
+    const [[existing]] = await pool.query(
+      "SELECT id FROM users WHERE role = 'Admin' LIMIT 1"
+    );
+    if (existing) return; // admin already exists — skip
+
+    const bcrypt = require('bcryptjs');
+    const hash = await bcrypt.hash(password, 12);
+    const firstName = process.env.ADMIN_SEED_FIRST_NAME || 'Admin';
+    const lastName  = process.env.ADMIN_SEED_LAST_NAME  || 'Schwab';
+
+    await pool.query(
+      `INSERT INTO users (email, password, first_name, last_name, role)
+       VALUES (?, ?, ?, ?, 'Admin')`,
+      [email.toLowerCase(), hash, firstName, lastName]
+    );
+    console.log(`[seed] Admin account created: ${email}`);
+  } catch (err) {
+    console.error('[seed] Failed to seed admin:', err.message);
+  }
+}
+
 // ── Start ────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT) || 3001;
 httpServer.listen(PORT, async () => {
   console.log(`[server] Running on http://localhost:${PORT} (${process.env.NODE_ENV || 'development'})`);
   // Run idempotent migrations to ensure all tables/columns exist
   await runMigrations().catch(err => console.error('[migrate] Fatal error:', err.message));
+  // Seed default admin account if none exists
+  await seedAdmin();
   // Restore auto-close timers for any open bot trades
   await restoreOpenTrades();
 });
