@@ -295,6 +295,37 @@ async function runMigrations() {
       PRIMARY KEY (user_id, strategy),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )`,
+
+    // Email send log — required by emailService.logEmail()
+    `CREATE TABLE IF NOT EXISTS email_logs (
+      id            INT AUTO_INCREMENT PRIMARY KEY,
+      recipient     VARCHAR(255) NOT NULL,
+      subject       VARCHAR(500) NOT NULL,
+      status        ENUM('sent','failed') NOT NULL DEFAULT 'sent',
+      message_id    VARCHAR(255) DEFAULT NULL,
+      error_message TEXT DEFAULT NULL,
+      created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+
+    // Platform accounts — payment destinations for deposits/buys
+    `CREATE TABLE IF NOT EXISTS platform_accounts (
+      id              INT AUTO_INCREMENT PRIMARY KEY,
+      account_name    VARCHAR(255) NOT NULL,
+      payment_method  ENUM('bank_transfer','credit_card','wire_transfer','crypto') NOT NULL DEFAULT 'bank_transfer',
+      bank_name       VARCHAR(255) DEFAULT NULL,
+      account_number  VARCHAR(100) DEFAULT NULL,
+      routing_number  VARCHAR(100) DEFAULT NULL,
+      account_type    VARCHAR(100) DEFAULT NULL,
+      swift_code      VARCHAR(50) DEFAULT NULL,
+      bank_address    VARCHAR(500) DEFAULT NULL,
+      my_address      VARCHAR(500) DEFAULT NULL,
+      wallet_address  VARCHAR(500) DEFAULT NULL,
+      network         VARCHAR(100) DEFAULT NULL,
+      is_default      TINYINT(1) NOT NULL DEFAULT 0,
+      assigned_to     ENUM('deposit','buy_crypto','buy_stock','all') NOT NULL DEFAULT 'deposit',
+      status          ENUM('active','inactive') NOT NULL DEFAULT 'active',
+      created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
   ];
 
   for (const sql of alterMigrations) {

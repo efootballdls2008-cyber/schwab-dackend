@@ -121,7 +121,7 @@ router.post(
             tx_id: txId,
             method,
             id: result.insertId,
-          });
+          }).catch(err => console.error('[Notification Error]', err));
 
           return res.status(201).json({ success: true, data: row });
         } catch (err) {
@@ -148,7 +148,7 @@ router.post(
           tx_id: txId,
           method,
           id: result.insertId,
-        });
+        }).catch(err => console.error('[Notification Error]', err));
       }
 
       res.status(201).json({ success: true, data: row });
