@@ -1,6 +1,8 @@
 /**
  * Email Service
  * Handles all email notifications for the platform using Resend
+ * Brand: Charles Schwab Trading Platform
+ * Colors: #0d0824 bg | #a28539 gold | #4ade80 green | #f59e0b amber | #f87171 red
  */
 const { Resend } = require('resend');
 const pool = require('../db/pool');
