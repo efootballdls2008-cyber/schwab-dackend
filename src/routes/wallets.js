@@ -3,6 +3,7 @@ const { query, body, param } = require('express-validator');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
 const { authenticate, requireAdmin } = require('../middleware/auth');
+const { buildUpdate, WALLETS_WHITELIST, WALLETS_FIELD_MAP } = require('../utils/buildUpdate');
 
 const router = express.Router();
 router.use(authenticate);
@@ -68,18 +69,12 @@ router.patch(
         return res.status(403).json({ success: false, message: 'Forbidden' });
       }
 
-      const allowed = ['balance', 'value_usd', 'change_30d', 'color'];
-      const fieldMap = { valueUsd: 'value_usd', change30d: 'change_30d' };
-      const updates = {};
-      for (const [k, v] of Object.entries(req.body)) {
-        const col = fieldMap[k] || k;
-        if (allowed.includes(col)) updates[col] = v;
-      }
-      if (!Object.keys(updates).length) {
+      const result = buildUpdate(req.body, WALLETS_WHITELIST, WALLETS_FIELD_MAP);
+      if (!result) {
         return res.status(400).json({ success: false, message: 'No valid fields' });
       }
-      const set = Object.keys(updates).map((k) => `\`${k}\` = ?`).join(', ');
-      await pool.query(`UPDATE wallets SET ${set} WHERE id = ?`, [...Object.values(updates), req.params.id]);
+      const { setClauses: set, values } = result;
+      await pool.query(`UPDATE wallets SET ${set} WHERE id = ?`, [...values, req.params.id]);
       const [[updated]] = await pool.query('SELECT * FROM wallets WHERE id = ?', [req.params.id]);
       res.json({ success: true, data: updated });
     } catch (err) {

@@ -1,43 +1,50 @@
 /**
- * Utility: insert an admin_notification row and emit it via Socket.io.
+ * Utility: create admin notifications using the enhanced notification service
  *
  * Usage:
  *   const notify = require('../utils/createAdminNotification');
- *   await notify({ title: 'New User', message: 'John Doe registered', type: 'user', relatedId: userId, relatedType: 'user' });
+ *   await notify({ title: 'New User', message: 'John Doe registered', type: 'user_registration', userId: userId });
+ *
+ * NOTE: Errors are swallowed and logged — never re-thrown — so a notification
+ * failure never crashes the calling request or background service.
  */
-const pool = require('../db/pool');
-const socketService = require('../socket/socketService');
+const notificationService = require('../services/notificationService');
 
 /**
  * @param {object} opts
  * @param {string} opts.title
  * @param {string} opts.message
- * @param {'info'|'success'|'warning'|'error'|'user'|'deposit'|'withdrawal'|'order'|'login'} [opts.type]
+ * @param {'user_deposit'|'user_withdrawal'|'buy_stocks'|'buy_crypto'|'bot_activation'|'bot_position_open'|'bot_position_close'|'user_pnl'|'suspicious_activity'|'failed_transaction'|'system_alert'|'user_registration'} [opts.type]
+ * @param {'low'|'medium'|'high'|'urgent'} [opts.priority]
  * @param {string|number|null} [opts.relatedId]
  * @param {string|null} [opts.relatedType]
+ * @param {number|null} [opts.userId]
+ * @param {object|null} [opts.metadata]
  */
-async function createAdminNotification({ title, message, type = 'info', relatedId = null, relatedType = null }) {
+async function createAdminNotification({
+  title,
+  message,
+  type = 'system_alert',
+  priority = 'medium',
+  relatedId = null,
+  relatedType = null,
+  userId = null,
+  metadata = null
+}) {
   try {
-    const [result] = await pool.query(
-      `INSERT INTO admin_notifications (title, message, type, related_id, related_type) VALUES (?,?,?,?,?)`,
-      [title, message, type, relatedId ? String(relatedId) : null, relatedType]
-    );
-    const [[row]] = await pool.query('SELECT * FROM admin_notifications WHERE id = ?', [result.insertId]);
-    const camel = {
-      id: row.id,
-      title: row.title,
-      message: row.message,
-      type: row.type,
-      isRead: false,
-      relatedId: row.related_id,
-      relatedType: row.related_type,
-      createdAt: row.created_at,
-    };
-    socketService.emitAdminNotification(camel);
-    return camel;
-  } catch (err) {
-    // Non-fatal — log but don't crash the request
-    console.error('[notify] Failed to create admin notification:', err.message);
+    return await notificationService.createAdminNotification({
+      title,
+      message,
+      type,
+      priority,
+      relatedId,
+      relatedType,
+      userId,
+      metadata
+    });
+  } catch (error) {
+    // Swallow — notification failures must never crash callers (routes or background services)
+    console.error('[createAdminNotification] Failed to create admin notification:', error.message);
     return null;
   }
 }

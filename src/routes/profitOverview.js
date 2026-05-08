@@ -10,16 +10,24 @@ router.use(authenticate);
 // ── GET /profitOverview?userId=:id ───────────────────────────
 router.get(
   '/',
-  [query('userId').isInt({ min: 1 }).withMessage('userId required')],
-  validate,
   async (req, res, next) => {
     try {
+      // Admin bulk fetch — no userId required
+      if (!req.query.userId) {
+        if (req.user.role !== 'Admin') {
+          return res.status(403).json({ success: false, message: 'Admin access required' });
+        }
+        const [rows] = await pool.query('SELECT * FROM profit_overview ORDER BY user_id');
+        const parsed = rows.map((r) => ({ ...r, data: typeof r.data === 'string' ? JSON.parse(r.data) : r.data }));
+        return res.json({ success: true, data: parsed });
+      }
+
       const userId = parseInt(req.query.userId);
+      if (isNaN(userId)) return res.status(422).json({ success: false, message: 'Invalid userId' });
       if (req.user.role !== 'Admin' && req.user.id !== userId) {
         return res.status(403).json({ success: false, message: 'Forbidden' });
       }
       const [rows] = await pool.query('SELECT * FROM profit_overview WHERE user_id = ?', [userId]);
-      // Parse JSON data field
       const parsed = rows.map((r) => ({ ...r, data: typeof r.data === 'string' ? JSON.parse(r.data) : r.data }));
       res.json({ success: true, data: parsed });
     } catch (err) {
@@ -56,6 +64,22 @@ router.post(
 );
 
 module.exports = router;
+
+// ── DELETE /profitOverview  (Admin only — delete ALL) ────────
+router.delete('/', requireAdmin, async (req, res, next) => {
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({
+      success: false,
+      message: 'Bulk delete requires { "confirm": true } in the request body.',
+    });
+  }
+  try {
+    await pool.query('DELETE FROM profit_overview');
+    res.json({ success: true, message: 'All profit overview records deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // ── DELETE /profitOverview/:id  (Admin only) ─────────────────
 router.delete(

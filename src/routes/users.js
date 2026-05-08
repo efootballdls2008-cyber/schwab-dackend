@@ -5,6 +5,7 @@ const pool = require('../db/pool');
 const validate = require('../middleware/validate');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const createUserNotification = require('../utils/createUserNotification');
+const { buildUpdate, USERS_WHITELIST, USERS_FIELD_MAP } = require('../utils/buildUpdate');
 
 const router = express.Router();
 
@@ -75,32 +76,30 @@ router.patch(
         return res.status(403).json({ success: false, message: 'Forbidden' });
       }
 
-      const allowed = ['email', 'first_name', 'last_name', 'phone', 'date_of_birth',
-                       'country', 'address', 'avatar', 'currency'];
-      // Admin-only fields
-      if (req.user.role === 'Admin') {
-        allowed.push('balance', 'account_status', 'role');
+      // Non-admin users cannot touch admin-only fields
+      const adminOnlyFields = new Set(['balance', 'account_status', 'role']);
+      const effectiveWhitelist = req.user.role === 'Admin'
+        ? USERS_WHITELIST
+        : new Set([...USERS_WHITELIST].filter(c => !adminOnlyFields.has(c)));
+
+      // Handle password separately (needs hashing before storage)
+      const bodyWithoutPassword = { ...req.body };
+      let hashedPassword = null;
+      if (req.body.password) {
+        hashedPassword = await bcrypt.hash(req.body.password, 12);
+        delete bodyWithoutPassword.password;
       }
 
-      const fieldMap = {
-        firstName: 'first_name', lastName: 'last_name', dateOfBirth: 'date_of_birth',
-        accountStatus: 'account_status',
-      };
-
-      const updates = {};
-      for (const [key, val] of Object.entries(req.body)) {
-        if (key === 'password') {
-          updates['password'] = await bcrypt.hash(val, 12);
-          continue;
-        }
-        const col = fieldMap[key] || key;
-        if (allowed.includes(col)) updates[col] = val;
-      }
-
-      if (Object.keys(updates).length === 0) {
+      const result = buildUpdate(bodyWithoutPassword, effectiveWhitelist, USERS_FIELD_MAP);
+      if (!result && !hashedPassword) {
         return res.status(400).json({ success: false, message: 'No valid fields to update' });
       }
 
+      const updates = result?.updates ?? {};
+      if (hashedPassword) updates['password'] = hashedPassword;
+
+      const setClauses = Object.keys(updates).map((k) => `\`${k}\` = ?`).join(', ');
+      const values = [...Object.values(updates), userId];
       // Snapshot old balance BEFORE the update so we can compute the diff
       let oldBalance = null;
       if (req.user.role === 'Admin' && updates['balance'] !== undefined) {
@@ -108,8 +107,6 @@ router.patch(
         oldBalance = parseFloat(snap?.balance ?? 0);
       }
 
-      const setClauses = Object.keys(updates).map((k) => `\`${k}\` = ?`).join(', ');
-      const values = [...Object.values(updates), userId];
       await pool.query(`UPDATE users SET ${setClauses} WHERE id = ?`, values);
 
       const [[updated]] = await pool.query(

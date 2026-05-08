@@ -1,6 +1,7 @@
 require('dotenv').config();
 const http = require('http');
 const express = require('express');
+const pool = require('./db/pool');
 const helmet = require('helmet');
 const cors = require('cors');
 const morgan = require('morgan');
@@ -10,7 +11,9 @@ const jwt = require('jsonwebtoken');
 
 const errorHandler = require('./middleware/errorHandler');
 const camelCaseResponse = require('./middleware/camelCase');
+const { isAdmin } = require('./middleware/auth');
 const { buildNotificationRoutes, adminNotifRouter } = require('./routes/notifications');
+const notificationSettingsRoutes = require('./routes/notificationSettings');
 const socketService = require('./socket/socketService');
 
 // ── Route imports ────────────────────────────────────────────
@@ -31,6 +34,8 @@ const platformSettingsRoutes = require('./routes/platformSettings');
 const platformAccountRoutes = require('./routes/platformAccounts');
 const adminActionRoutes     = require('./routes/adminActions');
 const kycRoutes             = require('./routes/kyc');
+const tickerRoutes          = require('./routes/ticker');
+const { restoreOpenTrades } = require('./services/tradeAutoClose');
 
 const app = express();
 
@@ -64,25 +69,74 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // ── Rate limiting ────────────────────────────────────────────
+
+// General limiter — raised to 500 req/15min to handle dashboard polling
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX) || 100,
+  max: parseInt(process.env.RATE_LIMIT_MAX) || 500,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    // Skip rate limiting for verified admin tokens only.
+    // jwt.verify() checks the signature — jwt.decode() does NOT and must never be used here.
+    const token = req.headers.authorization?.split(' ')[1];
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (isAdmin(decoded)) return true;
+      } catch { /* invalid or expired token — apply rate limiting */ }
+    }
+    return false;
+  },
   message: { success: false, message: 'Too many requests, please try again later.' },
 });
-app.use(limiter);
+
+// Relaxed limiter for bot trading endpoints (high frequency updates)
+const botLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 2000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Bot rate limit exceeded, please try again later.' },
+});
+
+// Relaxed limiter for ticker/market data endpoints (polled every 10s)
+const tickerLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute window
+  max: 60,             // 60 req/min per IP (1 per second headroom)
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Ticker rate limit exceeded, please slow down.' },
+});
 
 // Stricter limiter for auth endpoints
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: parseInt(process.env.AUTH_RATE_LIMIT_MAX) || 100, // Increased from 20 to 100
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { success: false, message: 'Too many auth attempts, please try again later.' },
 });
 
+// Apply general rate limiting to all routes except bot/ticker endpoints
+app.use((req, res, next) => {
+  if (req.path.startsWith('/botTrades') || req.path.startsWith('/botSettings')) {
+    return botLimiter(req, res, next);
+  }
+  if (req.path.startsWith('/ticker') || req.path.startsWith('/marketStats')) {
+    return tickerLimiter(req, res, next);
+  }
+  return limiter(req, res, next);
+});
+
 // ── Health check ─────────────────────────────────────────────
-app.get('/health', (req, res) => {
-  res.json({ success: true, status: 'ok', timestamp: new Date().toISOString() });
+app.get('/health', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ success: true, status: 'ok', db: 'connected', timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(503).json({ success: false, status: 'error', db: 'disconnected', timestamp: new Date().toISOString() });
+  }
 });
 
 // ── Routes ───────────────────────────────────────────────────
@@ -103,9 +157,11 @@ app.use('/platformSettings',  platformSettingsRoutes);
 app.use('/platformAccounts',  platformAccountRoutes);
 app.use('/adminActions',      adminActionRoutes);
 app.use('/kyc',               kycRoutes);
+app.use('/ticker',            tickerRoutes);
 app.use('/notifications',        buildNotificationRoutes('notifications'));
 app.use('/userNotifications',    buildNotificationRoutes('user_notifications'));
 app.use('/adminNotifications',   adminNotifRouter);
+app.use('/notificationSettings', notificationSettingsRoutes);
 
 // ── 404 handler ──────────────────────────────────────────────
 app.use((req, res) => {
@@ -145,8 +201,10 @@ socketService.init(io);
 
 // ── Start ────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT) || 3001;
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
   console.log(`[server] Running on http://localhost:${PORT} (${process.env.NODE_ENV || 'development'})`);
+  // Restore auto-close timers for any open bot trades
+  await restoreOpenTrades();
 });
 
 module.exports = app;

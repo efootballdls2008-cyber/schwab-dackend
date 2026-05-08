@@ -21,45 +21,25 @@ const createAdminNotification = require('../utils/createAdminNotification');
 const router = express.Router();
 router.use(authenticate);
 
-// ── Helper: camelCase a KYC row ───────────────────────────────
-function toCamel(row) {
-  if (!row) return null;
-  return {
-    id:              row.id,
-    userId:          row.user_id,
-    status:          row.status,
-    fullName:        row.full_name,
-    dateOfBirth:     row.date_of_birth,
-    country:         row.country,
-    idType:          row.id_type,
-    idNumber:        row.id_number,
-    frontImage:      row.front_image,
-    backImage:       row.back_image   || null,
-    selfieImage:     row.selfie_image,
-    rejectionReason: row.rejection_reason || null,
-    reviewedBy:      row.reviewed_by  || null,
-    reviewedAt:      row.reviewed_at  || null,
-    submittedAt:     row.submitted_at,
-    updatedAt:       row.updated_at,
-  };
-}
-
-// ── Helper: build public URL from file path ───────────────────
+// ── Helper: build public URL from a stored relative path ─────
+// Paths are stored as relative to the server root (e.g. "uploads/kyc/42/front.jpg").
+// We just prepend "/" to make them absolute URL paths.
 function toUrl(filePath) {
   if (!filePath) return null;
-  // Convert absolute disk path → relative URL served by /uploads
-  const rel = filePath.replace(/\\/g, '/');
-  const idx = rel.indexOf('/uploads/');
-  return idx !== -1 ? rel.slice(idx) : `/${rel}`;
+  // Normalise any backslashes (Windows) and strip a leading slash if already present
+  const rel = filePath.replace(/\\/g, '/').replace(/^\//, '')
+  return `/${rel}`
 }
 
+// Apply toUrl to image fields. Key renaming is handled by the camelCase middleware.
 function rowToResponse(row) {
-  const obj = toCamel(row);
-  if (!obj) return null;
-  obj.frontImage  = toUrl(obj.frontImage);
-  obj.backImage   = toUrl(obj.backImage);
-  obj.selfieImage = toUrl(obj.selfieImage);
-  return obj;
+  if (!row) return null;
+  return {
+    ...row,
+    front_image:  toUrl(row.front_image),
+    back_image:   toUrl(row.back_image),
+    selfie_image: toUrl(row.selfie_image),
+  };
 }
 
 // ── POST /kyc  — user submits KYC ────────────────────────────
@@ -110,6 +90,11 @@ router.post(
         return res.status(409).json({ success: false, message: 'You already have a pending KYC submission' });
       }
 
+      // Store paths relative to the server root (e.g. "uploads/kyc/42/front.jpg")
+      // so URLs are portable and never leak the absolute disk path.
+      const uploadsRoot = path.join(__dirname, '../../')
+      const toRelative = (f) => f ? path.relative(uploadsRoot, f.path).replace(/\\/g, '/') : null
+
       const [result] = await pool.query(
         `INSERT INTO kyc_submissions
            (user_id, full_name, date_of_birth, country, id_type, id_number,
@@ -117,9 +102,9 @@ router.post(
          VALUES (?,?,?,?,?,?,?,?,?)`,
         [
           userId, fullName, dateOfBirth, country, idType, idNumber,
-          frontFile.path,
-          backFile ? backFile.path : null,
-          selfieFile.path,
+          toRelative(frontFile),
+          toRelative(backFile),
+          toRelative(selfieFile),
         ]
       );
 
@@ -141,7 +126,7 @@ router.post(
       createAdminNotification({
         title: 'New KYC Submission',
         message: `${userName} submitted KYC documents (${idType.replace('_', ' ')}).`,
-        type: 'user',
+        type: 'system_alert',
         relatedId: result.insertId,
         relatedType: 'kyc',
       });

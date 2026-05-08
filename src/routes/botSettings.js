@@ -3,6 +3,7 @@ const { query, body, param } = require('express-validator');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
 const { authenticate } = require('../middleware/auth');
+const { buildUpdate, BOT_SETTINGS_WHITELIST, BOT_SETTINGS_FIELD_MAP } = require('../utils/buildUpdate');
 
 const router = express.Router();
 router.use(authenticate);
@@ -61,6 +62,8 @@ router.patch(
     body('autoReinvest').optional().isBoolean(),
     body('maxOpenTrades').optional().isInt({ min: 1 }),
     body('dailyProfitTarget').optional().isFloat({ min: 0 }),
+    body('confidenceThreshold').optional().isFloat({ min: 0, max: 100 }),
+    body('tradeDurationSeconds').optional().isInt({ min: 10 }),
   ],
   validate,
   async (req, res, next) => {
@@ -71,24 +74,12 @@ router.patch(
         return res.status(403).json({ success: false, message: 'Forbidden' });
       }
 
-      const fieldMap = {
-        riskLevel: 'risk_level', takeProfit: 'take_profit', stopLoss: 'stop_loss',
-        trailingStop: 'trailing_stop', autoReinvest: 'auto_reinvest',
-        maxOpenTrades: 'max_open_trades', dailyProfitTarget: 'daily_profit_target',
-      };
-      const allowed = ['running', 'strategy', 'risk_level', 'pair', 'timeframe',
-                       'take_profit', 'stop_loss', 'trailing_stop', 'auto_reinvest',
-                       'max_open_trades', 'daily_profit_target'];
-      const updates = {};
-      for (const [k, v] of Object.entries(req.body)) {
-        const col = fieldMap[k] || k;
-        if (allowed.includes(col)) updates[col] = v;
-      }
-      if (!Object.keys(updates).length) {
+      const result = buildUpdate(req.body, BOT_SETTINGS_WHITELIST, BOT_SETTINGS_FIELD_MAP);
+      if (!result) {
         return res.status(400).json({ success: false, message: 'No valid fields' });
       }
-      const set = Object.keys(updates).map((k) => `\`${k}\` = ?`).join(', ');
-      await pool.query(`UPDATE bot_settings SET ${set} WHERE id = ?`, [...Object.values(updates), req.params.id]);
+      const { setClauses: set, values } = result;
+      await pool.query(`UPDATE bot_settings SET ${set} WHERE id = ?`, [...values, req.params.id]);
       const [[updated]] = await pool.query('SELECT * FROM bot_settings WHERE id = ?', [req.params.id]);
       res.json({ success: true, data: updated });
     } catch (err) {

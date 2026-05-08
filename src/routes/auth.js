@@ -7,6 +7,7 @@ const validate = require('../middleware/validate');
 const { authenticate } = require('../middleware/auth');
 const createAdminNotification = require('../utils/createAdminNotification');
 const createUserNotification = require('../utils/createUserNotification');
+const emailService = require('../services/emailService');
 
 const router = express.Router();
 
@@ -82,14 +83,34 @@ router.post(
       // Create default bot settings
       await pool.query('INSERT INTO bot_settings (user_id) VALUES (?)', [userId]);
 
+      // ── Welcome notification for new user ────────────────────
+      createUserNotification({
+        userId,
+        title: 'Welcome to Charles Schwab Trading Platform! 🎉',
+        message: `Hi ${firstName}! Welcome aboard. We're excited to have you join our trading community. Explore our platform features, check out the market overview, and start your trading journey today. If you need any help, our support team is here for you 24/7.`,
+        type: 'system',
+      });
+
+      // Send welcome email
+      emailService.sendWelcomeEmail(userId, email, firstName)
+        .catch(emailErr => console.error('[Email Error]', emailErr));
+
       // Admin notification: new user registered
       createAdminNotification({
         title: 'New User Registered',
         message: `${firstName} ${lastName} (${email}) just created an account.`,
-        type: 'user',
+        type: 'user_registration',
         relatedId: userId,
         relatedType: 'user',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
+
+      // Send admin email notification (fire-and-forget — errors must not block registration)
+      emailService.sendAdminNotification(
+        'New User Registered',
+        `${firstName} ${lastName} (${email}) just created an account.`,
+        'user',
+        userId
+      ).catch(emailErr => console.error('[Email Error]', emailErr));
 
       const token = jwt.sign(
         { id: userId, email, role: 'Member' },
@@ -140,16 +161,27 @@ router.post(
         { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
       );
 
-      // Admin notification: user login (only for non-admin users to avoid noise)
-      if (user.role !== 'Admin') {
-        createAdminNotification({
-          title: 'User Login',
-          message: `${user.first_name} ${user.last_name} (${user.email}) logged in.`,
-          type: 'login',
-          relatedId: user.id,
-          relatedType: 'user',
+      // Welcome-back notification: throttled to once per day to avoid accumulation.
+      // Check when the last 'system' notification was sent for this user today.
+      const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      const [[recentWelcome]] = await pool.query(
+        `SELECT id FROM user_notifications
+         WHERE user_id = ? AND type = 'system' AND title = 'Welcome Back! 👋'
+           AND DATE(created_at) = ?
+         LIMIT 1`,
+        [user.id, today]
+      );
+      if (!recentWelcome) {
+        createUserNotification({
+          userId: user.id,
+          title: 'Welcome Back! 👋',
+          message: `Hi ${user.first_name}! You've successfully logged in. Check out the latest market trends and manage your portfolio.`,
+          type: 'system',
         });
       }
+
+      // Admin login notifications removed — high-traffic platforms generate too much noise.
+      // New user registrations are still notified (in /register above).
 
       res.json({
         success: true,
@@ -179,6 +211,32 @@ router.get('/me', authenticate, async (req, res, next) => {
     );
     if (!user) return res.status(404).json({ success: false, message: 'User not found' });
     res.json({ success: true, data: user });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /auth/refresh ────────────────────────────────────────
+// Issues a fresh token for a still-valid session.
+// The client should call this before the token expires (e.g. 1 day before 7d expiry).
+router.post('/refresh', authenticate, async (req, res, next) => {
+  try {
+    const [[user]] = await pool.query(
+      'SELECT id, email, role, account_status FROM users WHERE id = ?',
+      [req.user.id]
+    );
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (user.account_status === 'suspended') {
+      return res.status(403).json({ success: false, message: 'Account suspended' });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    res.json({ success: true, token });
   } catch (err) {
     next(err);
   }

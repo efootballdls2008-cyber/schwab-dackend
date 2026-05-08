@@ -3,8 +3,9 @@ const { query, body, param } = require('express-validator');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
 const { authenticate, requireAdmin } = require('../middleware/auth');
-const createAdminNotification = require('../utils/createAdminNotification');
+const notificationService = require('../services/notificationService');
 const createUserNotification = require('../utils/createUserNotification');
+const emailService = require('../services/emailService');
 
 const router = express.Router();
 router.use(authenticate);
@@ -46,7 +47,7 @@ router.post(
     body('type').isIn(['deposit', 'withdraw']),
     body('method').trim().notEmpty(),
     body('amount').isFloat({ min: 0.01 }).withMessage('Amount must be positive'),
-    body('txId').trim().notEmpty(),
+    body('txId').optional().trim(),
   ],
   validate,
   async (req, res, next) => {
@@ -79,56 +80,80 @@ router.post(
         }
       }
 
+      // For withdrawals: reserve the amount immediately inside a transaction
+      // to prevent double-spend if the user submits multiple requests concurrently.
+      // The reserved amount is deducted now and refunded if the request is rejected.
+      if (type === 'withdraw') {
+        const conn = await pool.getConnection();
+        try {
+          await conn.beginTransaction();
+
+          // Lock the user row so concurrent withdrawal submissions queue up
+          const [[user]] = await conn.query('SELECT balance FROM users WHERE id = ? FOR UPDATE', [userId]);
+          if (!user || user.balance < amount) {
+            await conn.rollback();
+            conn.release();
+            return res.status(422).json({
+              success: false,
+              message: 'Insufficient balance for withdrawal',
+            });
+          }
+
+          // Deduct immediately — this is the reservation
+          await conn.query('UPDATE users SET balance = balance - ? WHERE id = ?', [amount, userId]);
+
+          const [result] = await conn.query(
+            `INSERT INTO deposits (user_id, type, method, amount, currency, status, date, time, tx_id, note)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            [userId, type, method, amount, currency || 'USD', 'pending',
+             date || null, time || null, txId, note || null]
+          );
+
+          await conn.commit();
+          conn.release();
+
+          const [[row]] = await pool.query('SELECT * FROM deposits WHERE id = ?', [result.insertId]);
+
+          await notificationService.notifyWithdrawal(userId, {
+            amount: parseFloat(amount).toFixed(2),
+            currency: currency || 'USD',
+            status: 'pending',
+            tx_id: txId,
+            method,
+            id: result.insertId,
+          });
+
+          return res.status(201).json({ success: true, data: row });
+        } catch (err) {
+          await conn.rollback();
+          conn.release();
+          throw err;
+        }
+      }
+
       const [result] = await pool.query(
         `INSERT INTO deposits (user_id, type, method, amount, currency, status, date, time, tx_id, note)
          VALUES (?,?,?,?,?,?,?,?,?,?)`,
         [userId, type, method, amount, currency || 'USD', status || 'pending',
-         date || null, time || null, txId, note || null]
+         date || null, time || null, txId || null, note || null]
       );
       const [[row]] = await pool.query('SELECT * FROM deposits WHERE id = ?', [result.insertId]);
 
-      // Admin notification for new deposit/withdrawal
-      const [[user]] = await pool.query('SELECT first_name, last_name FROM users WHERE id = ?', [userId]);
-      const userName = user ? `${user.first_name} ${user.last_name}` : `User #${userId}`;
+      // Deposit path only — withdrawal is handled above with balance reservation
       if (type === 'deposit') {
-        createAdminNotification({
-          title: 'New Deposit Request',
-          message: `${userName} submitted a deposit of $${parseFloat(amount).toFixed(2)} via ${method}.`,
-          type: 'deposit',
-          relatedId: result.insertId,
-          relatedType: 'deposit',
-        });
-        // User notification
-        createUserNotification({
-          userId,
-          title: 'Deposit Request Submitted',
-          message: `Your deposit of $${parseFloat(amount).toFixed(2)} via ${method} is pending review.`,
-          type: 'deposit',
-          relatedId: result.insertId,
-          relatedType: 'deposit',
-        });
-      } else {
-        createAdminNotification({
-          title: 'New Withdrawal Request',
-          message: `${userName} requested a withdrawal of $${parseFloat(amount).toFixed(2)} via ${method}.`,
-          type: 'withdrawal',
-          relatedId: result.insertId,
-          relatedType: 'withdrawal',
-        });
-        // User notification
-        createUserNotification({
-          userId,
-          title: 'Withdrawal Request Submitted',
-          message: `Your withdrawal of $${parseFloat(amount).toFixed(2)} via ${method} is pending review.`,
-          type: 'withdrawal',
-          relatedId: result.insertId,
-          relatedType: 'withdrawal',
+        await notificationService.notifyDeposit(userId, {
+          amount: parseFloat(amount).toFixed(2),
+          currency: currency || 'USD',
+          status: status || 'pending',
+          tx_id: txId,
+          method,
+          id: result.insertId,
         });
       }
 
       res.status(201).json({ success: true, data: row });
-    } catch (err) {
-      next(err);
+    } catch (error) {
+      next(error);
     }
   }
 );
@@ -143,27 +168,57 @@ router.patch(
   ],
   validate,
   async (req, res, next) => {
+    const connection = await pool.getConnection();
     try {
-      const [[deposit]] = await pool.query('SELECT * FROM deposits WHERE id = ?', [req.params.id]);
-      if (!deposit) return res.status(404).json({ success: false, message: 'Deposit not found' });
+      await connection.beginTransaction();
+
+      const [[deposit]] = await connection.query('SELECT * FROM deposits WHERE id = ?', [req.params.id]);
+      if (!deposit) {
+        await connection.rollback();
+        connection.release();
+        return res.status(404).json({ success: false, message: 'Deposit not found' });
+      }
 
       const { status, rejectionReason } = req.body;
-      await pool.query(
+      
+      // Update deposit status
+      await connection.query(
         'UPDATE deposits SET status = ?, rejection_reason = ? WHERE id = ?',
         [status, rejectionReason || null, req.params.id]
       );
 
-      // Adjust user balance on approval
-      if (status === 'completed' && deposit.status !== 'completed') {
-        const delta = deposit.type === 'deposit' ? deposit.amount : -deposit.amount;
-        await pool.query('UPDATE users SET balance = balance + ? WHERE id = ?', [delta, deposit.user_id]);
+      // Adjust user balance on approval/rejection
+      if (deposit.status !== 'completed' && deposit.status !== 'rejected') {
+        if (status === 'completed') {
+          if (deposit.type === 'deposit') {
+            // Deposits: credit the user now (balance was never touched at submission)
+            await connection.query(
+              'UPDATE users SET balance = balance + ? WHERE id = ?',
+              [deposit.amount, deposit.user_id]
+            );
+          }
+          // Withdrawals: balance was already reserved (deducted) at submission — nothing to do
+        } else if (status === 'rejected') {
+          if (deposit.type === 'withdraw') {
+            // Refund the reserved amount back to the user
+            await connection.query(
+              'UPDATE users SET balance = balance + ? WHERE id = ?',
+              [deposit.amount, deposit.user_id]
+            );
+          }
+          // Deposits: nothing was credited at submission — nothing to refund
+        }
       }
+
+      await connection.commit();
+      connection.release();
 
       const [[updated]] = await pool.query('SELECT * FROM deposits WHERE id = ?', [req.params.id]);
 
-      // Notify user of status change
+      // Notify user of status change (fire-and-forget with error handling)
       const amt = `$${parseFloat(deposit.amount).toFixed(2)}`;
       const method = deposit.method;
+      
       if (status === 'completed') {
         createUserNotification({
           userId: deposit.user_id,
@@ -172,30 +227,64 @@ router.patch(
             ? `Your deposit of ${amt} via ${method} has been approved and credited to your account.`
             : `Your withdrawal of ${amt} via ${method} has been approved and is being processed.`,
           type: deposit.type === 'deposit' ? 'deposit' : 'withdrawal',
-          relatedId: req.params.id,
+          relatedId: parseInt(req.params.id),
           relatedType: 'deposit',
-        });
+        }).catch(err => console.error('[Notification Error]', err));
+        
+        // Send email notification (fire-and-forget — errors must not block the response)
+        if (deposit.type === 'deposit') {
+          emailService.sendDepositNotification(deposit.user_id, deposit.amount, 'completed', method)
+            .catch(emailErr => console.error('[Email Error]', emailErr));
+        } else {
+          emailService.sendWithdrawalNotification(deposit.user_id, deposit.amount, 'completed', method)
+            .catch(emailErr => console.error('[Email Error]', emailErr));
+        }
       } else if (status === 'rejected') {
         createUserNotification({
           userId: deposit.user_id,
           title: deposit.type === 'deposit' ? 'Deposit Rejected' : 'Withdrawal Rejected',
           message: deposit.type === 'deposit'
-            ? `Your deposit of ${amt} via ${method} was rejected.${req.body.rejectionReason ? ' Reason: ' + req.body.rejectionReason : ''}`
-            : `Your withdrawal of ${amt} via ${method} was rejected.${req.body.rejectionReason ? ' Reason: ' + req.body.rejectionReason : ''}`,
+            ? `Your deposit of ${amt} via ${method} was rejected.${rejectionReason ? ' Reason: ' + rejectionReason : ''}`
+            : `Your withdrawal of ${amt} via ${method} was rejected.${rejectionReason ? ' Reason: ' + rejectionReason : ''}`,
           type: deposit.type === 'deposit' ? 'deposit' : 'withdrawal',
-          relatedId: req.params.id,
+          relatedId: parseInt(req.params.id),
           relatedType: 'deposit',
-        });
+        }).catch(err => console.error('[Notification Error]', err));
+        
+        // Send email notification (fire-and-forget — errors must not block the response)
+        if (deposit.type === 'deposit') {
+          emailService.sendDepositNotification(deposit.user_id, deposit.amount, 'rejected', method, rejectionReason)
+            .catch(emailErr => console.error('[Email Error]', emailErr));
+        } else {
+          emailService.sendWithdrawalNotification(deposit.user_id, deposit.amount, 'rejected', method, rejectionReason)
+            .catch(emailErr => console.error('[Email Error]', emailErr));
+        }
       }
 
       res.json({ success: true, data: updated });
     } catch (err) {
+      await connection.rollback();
+      connection.release();
       next(err);
     }
   }
 );
 
-module.exports = router;
+// ── DELETE /deposits  (Admin only — delete ALL) ──────────────
+router.delete('/', requireAdmin, async (req, res, next) => {
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({
+      success: false,
+      message: 'Bulk delete requires { "confirm": true } in the request body.',
+    });
+  }
+  try {
+    await pool.query('DELETE FROM deposits');
+    res.json({ success: true, message: 'All deposits deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // ── DELETE /deposits/:id  (Admin only) ───────────────────────
 router.delete(
@@ -213,3 +302,5 @@ router.delete(
     }
   }
 );
+
+module.exports = router;
