@@ -313,22 +313,54 @@ async function runMigrations() {
       console.error('[migrate] CREATE error:', err.message);
     }
   }
+
+  // ── Ensure admin account exists (hardcoded fallback) ─────────
+  // INSERT IGNORE means this only inserts if the email doesn't exist yet.
+  // Hash below = bcrypt(admin@5555, 12)
+  try {
+    await pool.query(`
+      INSERT IGNORE INTO users (email, password, first_name, last_name, role)
+      VALUES (
+        'paxfulexchangecompany@gmail.com',
+        '$2a$12$rfxjOBfIyeQACqyU2G.eKu3SXzyVVLIemXsQro.ad.u2.mVWdL94q',
+        'Admin',
+        'Schwab',
+        'Admin'
+      )
+    `);
+    console.log('[migrate] Admin account ensured.');
+  } catch (err) {
+    console.error('[migrate] Admin seed error:', err.message);
+  }
+
   console.log('[migrate] Auto-migration complete.');
 }
 
 // ── Seed default admin account ────────────────────────────────
 // Creates the admin account from env vars if no Admin user exists yet.
 async function seedAdmin() {
-  const email    = process.env.ADMIN_SEED_EMAIL;
-  const password = process.env.ADMIN_SEED_PASSWORD;
-  if (!email || !password) return; // nothing to seed
+  const email    = (process.env.ADMIN_SEED_EMAIL    || 'Paxfulexchangecompany@gmail.com').toLowerCase();
+  const password =  process.env.ADMIN_SEED_PASSWORD || 'admin@5555';
 
   try {
+    // Check if ANY admin already exists
     const [[existing]] = await pool.query(
       "SELECT id FROM users WHERE role = 'Admin' LIMIT 1"
     );
-    if (existing) return; // admin already exists — skip
 
+    if (existing) {
+      // Admin exists — just make sure the email/password match env vars
+      const bcrypt = require('bcryptjs');
+      const hash = await bcrypt.hash(password, 12);
+      await pool.query(
+        "UPDATE users SET email = ?, password = ?, role = 'Admin' WHERE id = ?",
+        [email, hash, existing.id]
+      );
+      console.log(`[seed] Admin account updated: ${email}`);
+      return;
+    }
+
+    // No admin at all — create one
     const bcrypt = require('bcryptjs');
     const hash = await bcrypt.hash(password, 12);
     const firstName = process.env.ADMIN_SEED_FIRST_NAME || 'Admin';
@@ -337,7 +369,7 @@ async function seedAdmin() {
     await pool.query(
       `INSERT INTO users (email, password, first_name, last_name, role)
        VALUES (?, ?, ?, ?, 'Admin')`,
-      [email.toLowerCase(), hash, firstName, lastName]
+      [email, hash, firstName, lastName]
     );
     console.log(`[seed] Admin account created: ${email}`);
   } catch (err) {
