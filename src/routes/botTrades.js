@@ -171,7 +171,7 @@ router.post(
           type: 'bot_open',
           relatedId: id,
           relatedType: 'bot_trade',
-        });
+        }).catch(err => console.error('[Notification Error]', err));
 
         // Notify admin instantly
         const [[user]] = await pool.query('SELECT first_name, last_name FROM users WHERE id = ?', [userId]);
@@ -183,7 +183,7 @@ router.post(
           type: 'bot_position_open',
           relatedId: id,
           relatedType: 'bot_trade',
-        });
+        }).catch(err => console.error('[Notification Error]', err));
 
         // Emit real-time to admin
         socketService.emitToAdmins('botTrade:opened', {
@@ -253,7 +253,7 @@ router.post(
         type: 'bot_open',
         relatedId: id,
         relatedType: 'bot_trade',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
 
       // Notify admin
       const [[user]] = await pool.query('SELECT first_name, last_name FROM users WHERE id = ?', [userId]);
@@ -265,7 +265,7 @@ router.post(
         type: 'bot_position_open',
         relatedId: id,
         relatedType: 'bot_trade',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
 
       socketService.emitToAdmins('botTrade:opened', {
         tradeId: id, userId, userName, pair, side, strategy, timeframe: tf, entryPrice, amount,
@@ -357,7 +357,7 @@ router.patch('/:id', async (req, res, next) => {
         type: closeType,
         relatedId: req.params.id,
         relatedType: 'bot_trade',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
     }
 
     res.json({ success: true, data: formatTrade(updated) });

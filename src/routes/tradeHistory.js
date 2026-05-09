@@ -85,7 +85,7 @@ router.post(
         type: 'trade',
         relatedId: result.insertId,
         relatedType: 'trade_history',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
 
       res.status(201).json({ success: true, data: row });
     } catch (err) {

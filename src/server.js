@@ -189,8 +189,15 @@ io.use((socket, next) => {
   if (!token) return next(new Error('No token'));
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // Store verified claims on socket.data — this object is server-controlled
+    // and cannot be written by the client, unlike socket.handshake.auth.
+    // socketService.js reads from socket.data to avoid trusting client-supplied values.
+    socket.data.userId = decoded.id;
+    socket.data.role   = decoded.role;
+    // Also keep handshake fields for backwards compatibility with any legacy code
+    socket.handshake.auth.userId  = decoded.id;
     socket.handshake.auth.adminId = decoded.id;
-    socket.handshake.auth.role = decoded.role;
+    socket.handshake.auth.role    = decoded.role;
     next();
   } catch {
     next(new Error('Invalid token'));
@@ -205,6 +212,8 @@ socketService.init(io);
 async function runMigrations() {
   const alterMigrations = [
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(100) UNIQUE DEFAULT NULL`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INT NOT NULL DEFAULT 0`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until DATETIME DEFAULT NULL`,
     `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS final_pnl DECIMAL(20,8) DEFAULT NULL`,
     `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS display_pnl DECIMAL(20,8) DEFAULT NULL`,
     `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS expected_profit DECIMAL(20,8) DEFAULT NULL`,

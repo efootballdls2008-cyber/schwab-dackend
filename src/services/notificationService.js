@@ -557,13 +557,25 @@ class NotificationService {
   }
 
   getAdminEmailTemplate({ title, message, type, metadata, userId }) {
+    const escapeHtml = (str) =>
+      String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#x27;');
+
+    const metadataHtml = metadata
+      ? `<pre style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 5px; overflow-x: auto;">${escapeHtml(JSON.stringify(metadata, null, 2))}</pre>`
+      : '';
+
     const baseTemplate = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f8f9fa; padding: 20px;">
         <div style="background: #1a1040; color: white; padding: 30px; border-radius: 10px;">
-          <h1 style="margin: 0 0 20px 0; color: #f59e0b;">Admin Alert: ${title}</h1>
-          <p style="font-size: 16px; line-height: 1.6; margin: 0 0 15px 0;">${message}</p>
-          ${userId ? `<p style="color: #a78bfa;">User ID: ${userId}</p>` : ''}
-          ${metadata ? `<pre style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 5px; overflow-x: auto;">${JSON.stringify(metadata, null, 2)}</pre>` : ''}
+          <h1 style="margin: 0 0 20px 0; color: #f59e0b;">Admin Alert: ${escapeHtml(title)}</h1>
+          <p style="font-size: 16px; line-height: 1.6; margin: 0 0 15px 0;">${escapeHtml(message)}</p>
+          ${userId ? `<p style="color: #a78bfa;">User ID: ${parseInt(userId, 10) || 0}</p>` : ''}
+          ${metadataHtml}
         </div>
         <div style="text-align: center; margin-top: 20px; color: #666;">
           <p>Charles Schwab Admin Panel</p>
