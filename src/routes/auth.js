@@ -20,6 +20,11 @@ router.post(
   '/register',
   [
     // Personal Info
+    body('username')
+      .trim()
+      .notEmpty().withMessage('Username is required')
+      .isLength({ min: 3, max: 100 }).withMessage('Username must be 3-100 characters')
+      .matches(/^[a-zA-Z0-9_.-]+$/).withMessage('Username can only contain letters, numbers, dots, dashes, and underscores'),
     body('firstName')
       .trim()
       .notEmpty().withMessage('First name is required')
@@ -67,7 +72,7 @@ router.post(
         });
       }
 
-      const { firstName, lastName, email, phone, country, password } = req.body;
+      const { username, firstName, lastName, email, phone, country, password } = req.body;
 
       // Check email uniqueness
       const [[existingEmail]] = await pool.query(
@@ -82,6 +87,19 @@ router.post(
         });
       }
 
+      // Check username uniqueness
+      const [[existingUsername]] = await pool.query(
+        'SELECT id FROM users WHERE username = ?',
+        [username]
+      );
+      if (existingUsername) {
+        return res.status(409).json({
+          success: false,
+          field: 'username',
+          message: 'This username is already taken.',
+        });
+      }
+
       const hashed = await bcrypt.hash(password, 12);
       const memberSince = new Date().toLocaleDateString('en-US', {
         month: 'short',
@@ -90,10 +108,10 @@ router.post(
 
       const [result] = await pool.query(
         `INSERT INTO users
-           (email, password, first_name, last_name, phone, country,
+           (username, email, password, first_name, last_name, phone, country,
             role, account_status, member_since)
-         VALUES (?, ?, ?, ?, ?, ?, 'Member', 'active', ?)`,
-        [email, hashed, firstName, lastName, phone, country, memberSince]
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'Member', 'active', ?)`,
+        [username, email, hashed, firstName, lastName, phone, country, memberSince]
       );
 
       const userId = result.insertId;
