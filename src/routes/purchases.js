@@ -72,7 +72,7 @@ router.post(
         type: type === 'buy_crypto' ? 'buy_crypto' : 'buy_stocks',
         relatedId: result.insertId,
         relatedType: 'purchase',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
       // User notification
       createUserNotification({
         userId,
@@ -81,7 +81,7 @@ router.post(
         type: 'order',
         relatedId: result.insertId,
         relatedType: 'purchase',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
 
       res.status(201).json({ success: true, data: row });
     } catch (err) {
@@ -129,7 +129,7 @@ router.patch(
           type: 'order',
           relatedId: req.params.id,
           relatedType: 'purchase',
-        });
+        }).catch(err => console.error('[Notification Error]', err));
       } else if (status === 'rejected') {
         createUserNotification({
           userId: purchase.user_id,
@@ -138,7 +138,7 @@ router.patch(
           type: 'order',
           relatedId: req.params.id,
           relatedType: 'purchase',
-        });
+        }).catch(err => console.error('[Notification Error]', err));
       }
 
       res.json({ success: true, data: updated });

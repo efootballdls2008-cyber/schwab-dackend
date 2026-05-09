@@ -12,6 +12,17 @@ if (process.env.NODE_ENV === 'production') {
   }
 }
 
+// In development, warn if DB_PASSWORD is empty. MySQL can be configured to
+// allow empty passwords, which would let the pool connect silently with no
+// credentials — a common misconfiguration that is easy to miss.
+if (process.env.NODE_ENV !== 'production' && !process.env.DB_PASSWORD) {
+  console.warn(
+    '[DB] WARNING: DB_PASSWORD is not set. ' +
+    'If your MySQL instance allows empty passwords this connection will succeed ' +
+    'without credentials. Set DB_PASSWORD in your .env file to suppress this warning.'
+  );
+}
+
 const pool = mysql.createPool({
   host:     process.env.DB_HOST     || 'localhost',
   port:     parseInt(process.env.DB_PORT) || 3306,

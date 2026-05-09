@@ -88,7 +88,11 @@ class EmailService {
   async getUserEmailInfo(userId) {
     try {
       const [[user]] = await pool.query(
-        `SELECT email, first_name, last_name, email_notifications_enabled FROM users WHERE id = ?`,
+        `SELECT u.email, u.first_name, u.last_name,
+                COALESCE(ns.email_enabled, 1) AS email_enabled
+         FROM users u
+         LEFT JOIN notification_settings ns ON ns.user_id = u.id
+         WHERE u.id = ?`,
         [userId]
       );
       return user;
@@ -224,7 +228,7 @@ class EmailService {
   /** 2. Deposit notifications (pending / completed / rejected) */
   async sendDepositNotification(userId, amount, status, method, rejectionReason = null) {
     const user = await this.getUserEmailInfo(userId);
-    if (!user?.email || user.email_notifications_enabled === false) return;
+    if (!user?.email || user.email_enabled === 0) return;
 
     const fmt = `$${parseFloat(amount).toFixed(2)}`;
     const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -271,7 +275,7 @@ class EmailService {
   /** 3. Withdrawal notifications (pending / completed / rejected) */
   async sendWithdrawalNotification(userId, amount, status, method, rejectionReason = null) {
     const user = await this.getUserEmailInfo(userId);
-    if (!user?.email || user.email_notifications_enabled === false) return;
+    if (!user?.email || user.email_enabled === 0) return;
 
     const fmt  = `$${parseFloat(amount).toFixed(2)}`;
     const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -318,7 +322,7 @@ class EmailService {
   /** 4. Buy order notifications (open / filled / cancelled) */
   async sendBuyOrderNotification(userId, coin, amount, price, total, status) {
     const user = await this.getUserEmailInfo(userId);
-    if (!user?.email || user.email_notifications_enabled === false) return;
+    if (!user?.email || user.email_enabled === 0) return;
 
     const fmtPrice = `$${parseFloat(price).toFixed(2)}`;
     const fmtTotal = `$${parseFloat(total).toFixed(2)}`;
@@ -366,7 +370,7 @@ class EmailService {
   /** 5. Bot activated */
   async sendBotActivationEmail(userId, botData = {}) {
     const user = await this.getUserEmailInfo(userId);
-    if (!user?.email || user.email_notifications_enabled === false) return;
+    if (!user?.email || user.email_enabled === 0) return;
 
     const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
@@ -395,7 +399,7 @@ class EmailService {
   /** 6. Bot position opened */
   async sendBotPositionOpenedEmail(userId, tradeData = {}) {
     const user = await this.getUserEmailInfo(userId);
-    if (!user?.email || user.email_notifications_enabled === false) return;
+    if (!user?.email || user.email_enabled === 0) return;
 
     const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
@@ -426,7 +430,7 @@ class EmailService {
   /** 7. Bot position closed */
   async sendBotPositionClosedEmail(userId, tradeData = {}) {
     const user = await this.getUserEmailInfo(userId);
-    if (!user?.email || user.email_notifications_enabled === false) return;
+    if (!user?.email || user.email_enabled === 0) return;
 
     const pnl      = parseFloat(tradeData.pnl || 0);
     const isProfit = pnl >= 0;
