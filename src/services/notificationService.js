@@ -195,6 +195,10 @@ class NotificationService {
       metadata: botData
     });
 
+    // User email
+    this.emailService.sendBotActivationEmail(userId, botData)
+      .catch(err => console.error('[Email Error] sendBotActivationEmail:', err.message));
+
     // Admin notification
     await this.createAdminNotification({
       title: 'Bot Trading Activated',
@@ -224,6 +228,10 @@ class NotificationService {
         metadata: tradeData
       });
 
+      // User email
+      this.emailService.sendBotPositionOpenedEmail(userId, tradeData)
+        .catch(err => console.error('[Email Error] sendBotPositionOpenedEmail:', err.message));
+
       await this.createAdminNotification({
         title: 'Bot Position Opened',
         message: `User's bot opened ${side} position for ${pair}`,
@@ -249,6 +257,10 @@ class NotificationService {
         relatedType: 'bot_trade',
         metadata: tradeData
       });
+
+      // User email
+      this.emailService.sendBotPositionClosedEmail(userId, tradeData)
+        .catch(err => console.error('[Email Error] sendBotPositionClosedEmail:', err.message));
 
       await this.createAdminNotification({
         title: 'Bot Position Closed',
