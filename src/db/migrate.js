@@ -23,6 +23,13 @@ async function migrate() {
     `ALTER TABLE deposits ADD COLUMN IF NOT EXISTS rejection_reason TEXT DEFAULT NULL`,
     // purchases — rejection_reason column
     `ALTER TABLE purchases ADD COLUMN IF NOT EXISTS rejection_reason TEXT DEFAULT NULL`,
+    // ── v2: 3-step registration fields ──────────────────────────
+    // username: unique trading handle chosen at registration step 1
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(100) DEFAULT NULL`,
+    // phone already exists in schema but guard anyway
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50) DEFAULT NULL`,
+    // country already exists in schema but guard anyway
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS country VARCHAR(100) DEFAULT NULL`,
   ];
 
   // ── CREATE TABLE migrations (new tables) ─────────────────────
@@ -147,6 +154,17 @@ async function migrate() {
     )`,
   ];
 
+  // ── Post-ALTER index migrations ───────────────────────────────
+  // Add unique index on username after the column exists.
+  // MySQL doesn't support IF NOT EXISTS on CREATE INDEX, so we catch the
+  // duplicate-key-name error (1061) and treat it as a no-op.
+  const indexMigrations = [
+    {
+      sql: `CREATE UNIQUE INDEX idx_users_username ON users (username)`,
+      label: 'idx_users_username',
+    },
+  ];
+
   console.log('[migrate] Running ALTER migrations...');
   for (const sql of alterMigrations) {
     try {
@@ -169,6 +187,21 @@ async function migrate() {
       console.log(`[migrate] OK: table ${tableName} ensured`);
     } catch (err) {
       console.error(`[migrate] ERROR on CREATE: ${err.message}`);
+    }
+  }
+
+  console.log('[migrate] Running INDEX migrations...');
+  for (const { sql, label } of indexMigrations) {
+    try {
+      await pool.query(sql);
+      console.log(`[migrate] OK: index ${label} created`);
+    } catch (err) {
+      // 1061 = ER_DUP_KEYNAME — index already exists, safe to skip
+      if (err.errno === 1061) {
+        console.log(`[migrate] SKIP (index already exists): ${label}`);
+      } else {
+        console.error(`[migrate] ERROR on INDEX: ${err.message}`);
+      }
     }
   }
 
