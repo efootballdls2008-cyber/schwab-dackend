@@ -338,7 +338,7 @@ router.patch('/:id', async (req, res, next) => {
     await pool.query(`UPDATE bot_trades SET ${set} WHERE id = ?`, [...values, req.params.id]);
     const [[updated]] = await pool.query('SELECT * FROM bot_trades WHERE id = ?', [req.params.id]);
 
-    // If closing manually, cancel the auto-close timer
+    // If closing manually, cancel the auto-close timer and credit balance
     if (updates.status === 'closed' && trade.status !== 'closed') {
       cancelAutoClose(req.params.id);
 
@@ -347,6 +347,12 @@ router.patch('/:id', async (req, res, next) => {
       const isProfit = pnlVal >= 0;
       const pnlStr = `${isProfit ? '+' : ''}$${Math.abs(pnlVal).toFixed(2)} (${isProfit ? '+' : ''}${pnlPctVal.toFixed(2)}%)`;
       const closeType = isProfit ? 'take_profit' : 'stop_loss';
+
+      // Credit the user's balance with the trade P&L (mirrors executeAutoClose)
+      await pool.query(
+        'UPDATE users SET balance = balance + ? WHERE id = ?',
+        [pnlVal, trade.user_id]
+      );
 
       createUserNotification({
         userId: trade.user_id,

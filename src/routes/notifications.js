@@ -23,8 +23,18 @@ function toCamelAdmin(row) {
   };
 }
 
+// ── Allowlist of tables this factory is permitted to query ────
+const ALLOWED_NOTIFICATION_TABLES = new Set(['user_notifications']);
+
 // ── Helper: build routes for a given table ────────────────────
 function buildNotificationRoutes(table) {
+  if (!ALLOWED_NOTIFICATION_TABLES.has(table)) {
+    throw new Error(
+      `[notifications] Refusing to build routes for unknown table "${table}". ` +
+      `Add it to ALLOWED_NOTIFICATION_TABLES if it is intentional.`
+    );
+  }
+
   const r = express.Router();
   r.use(authenticate);
 

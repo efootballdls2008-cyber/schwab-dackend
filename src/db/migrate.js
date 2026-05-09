@@ -10,26 +10,33 @@ async function migrate() {
   // ── ALTER migrations (add columns to existing tables) ────────
   const alterMigrations = [
     // bot_trades new columns
-    `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS final_pnl DECIMAL(20,8) DEFAULT NULL`,
-    `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS display_pnl DECIMAL(20,8) DEFAULT NULL`,
-    `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS expected_profit DECIMAL(20,8) DEFAULT NULL`,
-    `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS trade_duration_seconds INT DEFAULT NULL`,
-    `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS timeframe VARCHAR(20) DEFAULT '1h'`,
-    `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS close_reason VARCHAR(50) DEFAULT NULL`,
+    `ALTER TABLE bot_trades ADD COLUMN final_pnl DECIMAL(20,8) DEFAULT NULL`,
+    `ALTER TABLE bot_trades ADD COLUMN display_pnl DECIMAL(20,8) DEFAULT NULL`,
+    `ALTER TABLE bot_trades ADD COLUMN expected_profit DECIMAL(20,8) DEFAULT NULL`,
+    `ALTER TABLE bot_trades ADD COLUMN trade_duration_seconds INT DEFAULT NULL`,
+    `ALTER TABLE bot_trades ADD COLUMN timeframe VARCHAR(20) DEFAULT '1h'`,
+    `ALTER TABLE bot_trades ADD COLUMN close_reason VARCHAR(50) DEFAULT NULL`,
     // bot_settings new columns
-    `ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS confidence_threshold DECIMAL(5,2) NOT NULL DEFAULT 45.00`,
-    `ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS trade_duration_seconds INT DEFAULT NULL`,
+    `ALTER TABLE bot_settings ADD COLUMN confidence_threshold DECIMAL(5,2) NOT NULL DEFAULT 45.00`,
+    `ALTER TABLE bot_settings ADD COLUMN trade_duration_seconds INT DEFAULT NULL`,
     // deposits — rejection_reason column (may be missing on older DBs)
-    `ALTER TABLE deposits ADD COLUMN IF NOT EXISTS rejection_reason TEXT DEFAULT NULL`,
+    `ALTER TABLE deposits ADD COLUMN rejection_reason TEXT DEFAULT NULL`,
     // purchases — rejection_reason column
-    `ALTER TABLE purchases ADD COLUMN IF NOT EXISTS rejection_reason TEXT DEFAULT NULL`,
+    `ALTER TABLE purchases ADD COLUMN rejection_reason TEXT DEFAULT NULL`,
     // ── v2: 3-step registration fields ──────────────────────────
     // username: unique trading handle chosen at registration step 1
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(100) DEFAULT NULL`,
+    `ALTER TABLE users ADD COLUMN username VARCHAR(100) DEFAULT NULL`,
     // phone already exists in schema but guard anyway
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50) DEFAULT NULL`,
+    `ALTER TABLE users ADD COLUMN phone VARCHAR(50) DEFAULT NULL`,
     // country already exists in schema but guard anyway
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS country VARCHAR(100) DEFAULT NULL`,
+    `ALTER TABLE users ADD COLUMN country VARCHAR(100) DEFAULT NULL`,
+    // platform_accounts deposit flow columns
+    `ALTER TABLE platform_accounts ADD COLUMN payment_method ENUM('bank_transfer','credit_card','wire_transfer','crypto') NOT NULL DEFAULT 'bank_transfer'`,
+    `ALTER TABLE platform_accounts ADD COLUMN bank_address VARCHAR(500) DEFAULT NULL`,
+    `ALTER TABLE platform_accounts ADD COLUMN my_address VARCHAR(500) DEFAULT NULL`,
+    `ALTER TABLE platform_accounts ADD COLUMN wallet_address VARCHAR(500) DEFAULT NULL`,
+    `ALTER TABLE platform_accounts ADD COLUMN network VARCHAR(100) DEFAULT NULL`,
+    `ALTER TABLE platform_accounts ADD COLUMN assigned_to ENUM('deposit','buy_crypto','buy_stock','all') NOT NULL DEFAULT 'deposit'`,
   ];
 
   // ── CREATE TABLE migrations (new tables) ─────────────────────
@@ -171,7 +178,7 @@ async function migrate() {
       await pool.query(sql);
       console.log(`[migrate] OK: ${sql.slice(0, 80)}...`);
     } catch (err) {
-      if (err.code === 'ER_DUP_FIELDNAME') {
+      if (err.code === 'ER_DUP_FIELDNAME' || err.errno === 1060) {
         console.log(`[migrate] SKIP (already exists): ${sql.slice(0, 60)}...`);
       } else {
         console.error(`[migrate] ERROR on ALTER: ${err.message}`);

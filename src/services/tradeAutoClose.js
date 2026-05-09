@@ -138,13 +138,7 @@ async function executeAutoClose(tradeId, adminTargetProfit = null) {
       [exitPrice, pnl, pnlPct, pnl, closedAt, tradeId]
     );
 
-    // Credit or debit the user's balance with the P&L
-    await pool.query(
-      'UPDATE users SET balance = balance + ? WHERE id = ?',
-      [pnl, trade.user_id]
-    );
-
-    // Credit or debit the user's balance with the trade P&L.
+    // Credit the user's balance with the trade P&L.
     // pnl is positive for profit, negative for loss — adding it covers both cases.
     await pool.query(
       'UPDATE users SET balance = balance + ? WHERE id = ?',

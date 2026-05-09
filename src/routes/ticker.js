@@ -1,7 +1,9 @@
 const express = require('express');
 const https = require('https');
+const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
+router.use(authenticate);
 
 // ── In-memory cache ───────────────────────────────────────────────────────────
 // Caches Binance responses per symbol for TICKER_CACHE_TTL_MS milliseconds.
