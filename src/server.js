@@ -204,6 +204,7 @@ socketService.init(io);
 // so new tables/columns are always present without a manual deploy step.
 async function runMigrations() {
   const alterMigrations = [
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(100) UNIQUE DEFAULT NULL`,
     `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS final_pnl DECIMAL(20,8) DEFAULT NULL`,
     `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS display_pnl DECIMAL(20,8) DEFAULT NULL`,
     `ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS expected_profit DECIMAL(20,8) DEFAULT NULL`,
