@@ -143,16 +143,26 @@ router.post(
       const tradeStatus = status || 'open';
       const tf = timeframe || '1h';
 
+      // Convert ISO 8601 strings to MySQL DATETIME format (YYYY-MM-DD HH:MM:SS)
+      const toMysqlDatetime = (val) => {
+        if (!val) return null;
+        const d = new Date(val);
+        if (isNaN(d.getTime())) return null;
+        return d.toISOString().slice(0, 19).replace('T', ' ');
+      };
+      const openedAtMysql = toMysqlDatetime(openedAt) || toMysqlDatetime(new Date());
+      const closedAtMysql = toMysqlDatetime(closedAt);
+
       await pool.query(
         `INSERT INTO bot_trades
           (id, user_id, pair, side, entry_price, exit_price, amount,
-           pnl, pnl_pct, strategy, signal, timeframe, opened_at, closed_at, status,
+           pnl, pnl_pct, strategy, \`signal\`, timeframe, opened_at, closed_at, status,
            expected_profit, trade_duration_seconds)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id, userId, pair, side, entryPrice, exitPrice || null, amount,
           pnl || 0, pnlPct || 0, strategy || null, signal || null, tf,
-          openedAt || new Date(), closedAt || null, tradeStatus,
+          openedAtMysql, closedAtMysql || null, tradeStatus,
           expectedProfit || null, tradeDurationSeconds || null,
         ]
       );
@@ -233,7 +243,7 @@ router.post(
       await pool.query(
         `INSERT INTO bot_trades
           (id, user_id, pair, side, entry_price, amount,
-           pnl, pnl_pct, strategy, signal, timeframe, opened_at, status,
+           pnl, pnl_pct, strategy, \`signal\`, timeframe, opened_at, status,
            expected_profit, trade_duration_seconds)
          VALUES (?,?,?,?,?,?,0,0,?,?,?,NOW(),'open',?,?)`,
         [id, userId, pair, side, entryPrice, amount, strategy, signal || null, tf,

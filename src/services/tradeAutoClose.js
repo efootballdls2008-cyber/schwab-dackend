@@ -73,6 +73,13 @@ function scheduleAutoClose(trade, adminDurationSeconds = null, adminTargetProfit
     tradeId,
   };
 
+  // Persist the duration on the trade row so restoreOpenTrades can calculate
+  // the correct remaining time after a server restart.
+  pool.query(
+    'UPDATE bot_trades SET trade_duration_seconds = ? WHERE id = ? AND trade_duration_seconds IS NULL',
+    [durationSeconds, tradeId]
+  ).catch(() => { /* non-critical */ });
+
   return durationSeconds;
 }
 
