@@ -112,7 +112,7 @@ const tickerLimiter = rateLimit({
 // Stricter limiter for auth endpoints
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: parseInt(process.env.AUTH_RATE_LIMIT_MAX) || 100, // Increased from 20 to 100
+  max: parseInt(process.env.AUTH_RATE_LIMIT_MAX) || 20,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many auth attempts, please try again later.' },
@@ -356,32 +356,30 @@ async function runMigrations() {
   }
 
   // ── Ensure admin account exists (hardcoded fallback) ─────────
-  // INSERT IGNORE means this only inserts if the email doesn't exist yet.
-  // Hash below = bcrypt(admin@5555, 12)
-  try {
-    await pool.query(`
-      INSERT IGNORE INTO users (email, password, first_name, last_name, role)
-      VALUES (
-        'paxfulexchangecompany@gmail.com',
-        '$2a$12$rfxjOBfIyeQACqyU2G.eKu3SXzyVVLIemXsQro.ad.u2.mVWdL94q',
-        'Admin',
-        'Schwab',
-        'Admin'
-      )
-    `);
-    console.log('[migrate] Admin account ensured.');
-  } catch (err) {
-    console.error('[migrate] Admin seed error:', err.message);
-  }
-
+  // Removed: hardcoded credentials are a security risk.
+  // Admin seeding is handled exclusively by seedAdmin() below,
+  // which reads credentials from environment variables.
   console.log('[migrate] Auto-migration complete.');
 }
 
 // ── Seed default admin account ────────────────────────────────
 // Creates the admin account from env vars if no Admin user exists yet.
+// Does NOT overwrite an existing admin's password on every restart —
+// only sets it once when the admin row is first created.
 async function seedAdmin() {
-  const email    = (process.env.ADMIN_SEED_EMAIL    || 'Paxfulexchangecompany@gmail.com').toLowerCase();
-  const password =  process.env.ADMIN_SEED_PASSWORD || 'admin@5555';
+  const email    = (process.env.ADMIN_SEED_EMAIL    || 'admin@example.com').toLowerCase();
+  const password =  process.env.ADMIN_SEED_PASSWORD;
+
+  // Refuse to start if the password is missing or is the placeholder default
+  const WEAK_PASSWORDS = new Set(['', 'change_me_before_deploying', 'temp', 'admin', 'password', 'admin@5555']);
+  if (!password || WEAK_PASSWORDS.has(password)) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[seed] FATAL: ADMIN_SEED_PASSWORD is missing or insecure. Set a strong password in your environment variables.');
+      process.exit(1);
+    } else {
+      console.warn('[seed] WARNING: ADMIN_SEED_PASSWORD is weak or missing. Set a strong password before deploying to production.');
+    }
+  }
 
   try {
     // Check if ANY admin already exists
@@ -390,14 +388,9 @@ async function seedAdmin() {
     );
 
     if (existing) {
-      // Admin exists — just make sure the email/password match env vars
-      const bcrypt = require('bcryptjs');
-      const hash = await bcrypt.hash(password, 12);
-      await pool.query(
-        "UPDATE users SET email = ?, password = ?, role = 'Admin' WHERE id = ?",
-        [email, hash, existing.id]
-      );
-      console.log(`[seed] Admin account updated: ${email}`);
+      // Admin already exists — do NOT overwrite their password on every restart.
+      // Password changes should be done through the admin UI or a dedicated migration.
+      console.log(`[seed] Admin account already exists (id=${existing.id}). Skipping seed.`);
       return;
     }
 

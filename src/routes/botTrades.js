@@ -143,16 +143,26 @@ router.post(
       const tradeStatus = status || 'open';
       const tf = timeframe || '1h';
 
+      // Convert ISO 8601 strings to MySQL DATETIME format (YYYY-MM-DD HH:MM:SS)
+      const toMysqlDatetime = (val) => {
+        if (!val) return null;
+        const d = new Date(val);
+        if (isNaN(d.getTime())) return null;
+        return d.toISOString().slice(0, 19).replace('T', ' ');
+      };
+      const openedAtMysql = toMysqlDatetime(openedAt) || toMysqlDatetime(new Date());
+      const closedAtMysql = toMysqlDatetime(closedAt);
+
       await pool.query(
         `INSERT INTO bot_trades
           (id, user_id, pair, side, entry_price, exit_price, amount,
-           pnl, pnl_pct, strategy, signal, timeframe, opened_at, closed_at, status,
+           pnl, pnl_pct, strategy, \`signal\`, timeframe, opened_at, closed_at, status,
            expected_profit, trade_duration_seconds)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id, userId, pair, side, entryPrice, exitPrice || null, amount,
           pnl || 0, pnlPct || 0, strategy || null, signal || null, tf,
-          openedAt || new Date(), closedAt || null, tradeStatus,
+          openedAtMysql, closedAtMysql || null, tradeStatus,
           expectedProfit || null, tradeDurationSeconds || null,
         ]
       );
@@ -233,7 +243,7 @@ router.post(
       await pool.query(
         `INSERT INTO bot_trades
           (id, user_id, pair, side, entry_price, amount,
-           pnl, pnl_pct, strategy, signal, timeframe, opened_at, status,
+           pnl, pnl_pct, strategy, \`signal\`, timeframe, opened_at, status,
            expected_profit, trade_duration_seconds)
          VALUES (?,?,?,?,?,?,0,0,?,?,?,NOW(),'open',?,?)`,
         [id, userId, pair, side, entryPrice, amount, strategy, signal || null, tf,
@@ -338,7 +348,7 @@ router.patch('/:id', async (req, res, next) => {
     await pool.query(`UPDATE bot_trades SET ${set} WHERE id = ?`, [...values, req.params.id]);
     const [[updated]] = await pool.query('SELECT * FROM bot_trades WHERE id = ?', [req.params.id]);
 
-    // If closing manually, cancel the auto-close timer
+    // If closing manually, cancel the auto-close timer and credit balance
     if (updates.status === 'closed' && trade.status !== 'closed') {
       cancelAutoClose(req.params.id);
 
@@ -347,6 +357,12 @@ router.patch('/:id', async (req, res, next) => {
       const isProfit = pnlVal >= 0;
       const pnlStr = `${isProfit ? '+' : ''}$${Math.abs(pnlVal).toFixed(2)} (${isProfit ? '+' : ''}${pnlPctVal.toFixed(2)}%)`;
       const closeType = isProfit ? 'take_profit' : 'stop_loss';
+
+      // Credit the user's balance with the trade P&L (mirrors executeAutoClose)
+      await pool.query(
+        'UPDATE users SET balance = balance + ? WHERE id = ?',
+        [pnlVal, trade.user_id]
+      );
 
       createUserNotification({
         userId: trade.user_id,
