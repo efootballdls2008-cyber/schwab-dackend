@@ -338,9 +338,27 @@ async function runMigrations() {
     )`,
   ];
 
+  // MySQL does not support ADD COLUMN IF NOT EXISTS (MariaDB-only syntax).
+  // We check INFORMATION_SCHEMA first and skip columns that already exist.
+  const [[{ db: currentDb }]] = await pool.query('SELECT DATABASE() AS db');
   for (const sql of alterMigrations) {
     try {
-      await pool.query(sql);
+      // Parse table and column name from: ALTER TABLE <tbl> ADD COLUMN IF NOT EXISTS <col> ...
+      const match = sql.match(/ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i);
+      if (match) {
+        const [, tableName, columnName] = match;
+        const [[existing]] = await pool.query(
+          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+           WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+          [currentDb, tableName, columnName]
+        );
+        if (existing) continue; // column already exists, skip
+        // Rewrite to plain ADD COLUMN (strip the IF NOT EXISTS)
+        const cleanSql = sql.replace(/ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+/i, 'ADD COLUMN ');
+        await pool.query(cleanSql);
+      } else {
+        await pool.query(sql);
+      }
     } catch (err) {
       if (err.code !== 'ER_DUP_FIELDNAME') {
         console.error('[migrate] ALTER error:', err.message);
