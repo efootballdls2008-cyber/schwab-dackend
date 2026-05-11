@@ -49,11 +49,12 @@ router.post(
     body('amount').isFloat({ min: 0.01 }).withMessage('Amount must be positive'),
     body('txId').optional().trim(),
     body('note').optional().trim().isLength({ max: 500 }).withMessage('Note must be 500 characters or fewer'),
+    body('screenshot').optional().isString(),
   ],
   validate,
   async (req, res, next) => {
     try {
-      const { userId, type, method, amount, currency, status, date, time, txId, note } = req.body;
+      const { userId, type, method, amount, currency, status, date, time, txId, note, screenshot } = req.body;
       if (req.user.role !== 'Admin' && req.user.id !== userId) {
         return res.status(403).json({ success: false, message: 'Forbidden' });
       }
@@ -104,10 +105,10 @@ router.post(
           await conn.query('UPDATE users SET balance = balance - ? WHERE id = ?', [amount, userId]);
 
           const [result] = await conn.query(
-            `INSERT INTO deposits (user_id, type, method, amount, currency, status, date, time, tx_id, note)
-             VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            `INSERT INTO deposits (user_id, type, method, amount, currency, status, date, time, tx_id, note, screenshot)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
             [userId, type, method, amount, currency || 'USD', 'pending',
-             date || null, time || null, txId, note || null]
+             date || null, time || null, txId, note || null, screenshot || null]
           );
 
           await conn.commit();
@@ -137,10 +138,10 @@ router.post(
       const insertStatus = req.user.role === 'Admin' ? (status || 'pending') : 'pending';
 
       const [result] = await pool.query(
-        `INSERT INTO deposits (user_id, type, method, amount, currency, status, date, time, tx_id, note)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO deposits (user_id, type, method, amount, currency, status, date, time, tx_id, note, screenshot)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
         [userId, type, method, amount, currency || 'USD', insertStatus,
-         date || null, time || null, txId || null, note || null]
+         date || null, time || null, txId || null, note || null, screenshot || null]
       );
       const [[row]] = await pool.query('SELECT * FROM deposits WHERE id = ?', [result.insertId]);
 

@@ -23,6 +23,20 @@
  * @returns {{ updates: object, setClauses: string, values: any[] } | null}
  *   Returns null when no valid fields are present.
  */
+
+// Columns that store DATETIME — ISO 8601 strings must be converted to
+// MySQL's 'YYYY-MM-DD HH:MM:SS' format before being used in a SET clause.
+const DATETIME_COLUMNS = new Set([
+  'closed_at', 'opened_at', 'created_at', 'updated_at',
+]);
+
+function toMysqlDatetime(val) {
+  if (!val) return null;
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 19).replace('T', ' ');
+}
+
 function buildUpdate(body, whitelist, fieldMap = {}) {
   const updates = {};
 
@@ -30,7 +44,8 @@ function buildUpdate(body, whitelist, fieldMap = {}) {
     const col = fieldMap[key] ?? key;
     // Only allow columns that are in the frozen whitelist
     if (whitelist.has(col)) {
-      updates[col] = val;
+      // Convert ISO datetime strings to MySQL DATETIME format
+      updates[col] = DATETIME_COLUMNS.has(col) ? toMysqlDatetime(val) : val;
     }
   }
 
