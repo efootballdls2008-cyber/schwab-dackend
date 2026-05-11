@@ -21,6 +21,8 @@ async function migrate() {
     `ALTER TABLE bot_settings ADD COLUMN trade_duration_seconds INT DEFAULT NULL`,
     // deposits — rejection_reason column (may be missing on older DBs)
     `ALTER TABLE deposits ADD COLUMN rejection_reason TEXT DEFAULT NULL`,
+    // deposits — screenshot column for payment proof uploads
+    `ALTER TABLE deposits ADD COLUMN screenshot MEDIUMTEXT DEFAULT NULL`,
     // purchases — rejection_reason column
     `ALTER TABLE purchases ADD COLUMN rejection_reason TEXT DEFAULT NULL`,
     // ── v2: 3-step registration fields ──────────────────────────
