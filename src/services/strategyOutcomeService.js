@@ -117,9 +117,14 @@ function calculateFinalPnL(trade, outcome, adminTargetProfit = null) {
   const amount     = parseFloat(trade.amount);
   const side       = trade.side;
 
+  // Negative adminTargetProfit means admin forced a loss of that magnitude
+  const forcedLoss = adminTargetProfit !== null && adminTargetProfit < 0;
+  const effectiveOutcome = forcedLoss ? 'loss' : outcome;
+  const lossAmount = forcedLoss ? Math.abs(adminTargetProfit) : null;
+
   let pnl, pnlPct, exitPrice;
 
-  if (outcome === 'win') {
+  if (effectiveOutcome === 'win') {
     if (adminTargetProfit && adminTargetProfit > 0) {
       pnl      = parseFloat(adminTargetProfit);
       pnlPct   = (pnl / (entryPrice * amount)) * 100;
@@ -134,11 +139,20 @@ function calculateFinalPnL(trade, outcome, adminTargetProfit = null) {
         : entryPrice * (1 - pnlPct / 100);
     }
   } else {
-    pnlPct    = -(0.3 + Math.random() * 2.2);
-    pnl       = (entryPrice * amount * pnlPct) / 100;
-    exitPrice = side === 'buy'
-      ? entryPrice * (1 + pnlPct / 100)
-      : entryPrice * (1 - pnlPct / 100);
+    if (lossAmount) {
+      // Admin-specified loss amount
+      pnl       = -lossAmount;
+      pnlPct    = (pnl / (entryPrice * amount)) * 100;
+      exitPrice = side === 'buy'
+        ? entryPrice + (pnl / amount)
+        : entryPrice - (pnl / amount);
+    } else {
+      pnlPct    = -(0.3 + Math.random() * 2.2);
+      pnl       = (entryPrice * amount * pnlPct) / 100;
+      exitPrice = side === 'buy'
+        ? entryPrice * (1 + pnlPct / 100)
+        : entryPrice * (1 - pnlPct / 100);
+    }
   }
 
   return {

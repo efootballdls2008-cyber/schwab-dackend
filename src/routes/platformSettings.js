@@ -94,6 +94,31 @@ router.patch(
       const set = Object.keys(updates).map((k) => `\`${k}\` = ?`).join(', ');
       await pool.query(`UPDATE platform_settings SET ${set} LIMIT 1`, Object.values(updates));
       const [[updated]] = await pool.query('SELECT * FROM platform_settings LIMIT 1');
+
+      // ── Propagate bot defaults to all existing user bot_settings rows ──
+      // Only update the fields that were actually sent in this request so we
+      // don't accidentally overwrite user-customised settings with stale values.
+      const botFieldMap = {
+        botDefaultStrategy:      { col: 'strategy',             val: req.body.botDefaultStrategy },
+        botDefaultRiskLevel:     { col: 'risk_level',           val: req.body.botDefaultRiskLevel },
+        botDefaultTimeframe:     { col: 'timeframe',            val: req.body.botDefaultTimeframe },
+        botConfidenceThreshold:  { col: 'confidence_threshold', val: req.body.botConfidenceThreshold },
+        botMaxOpenTrades:        { col: 'max_open_trades',      val: req.body.botMaxOpenTrades },
+      };
+
+      const botUpdates = {};
+      for (const [key, { col, val }] of Object.entries(botFieldMap)) {
+        if (req.body[key] !== undefined) botUpdates[col] = val;
+      }
+
+      if (Object.keys(botUpdates).length > 0) {
+        const botSet = Object.keys(botUpdates).map(k => `\`${k}\` = ?`).join(', ');
+        await pool.query(
+          `UPDATE bot_settings SET ${botSet}`,
+          Object.values(botUpdates)
+        );
+      }
+
       res.json({ success: true, data: updated });
     } catch (err) {
       next(err);

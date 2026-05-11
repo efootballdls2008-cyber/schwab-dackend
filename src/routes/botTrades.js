@@ -234,11 +234,17 @@ router.post(
     try {
       const {
         userId, pair, side, entryPrice, amount, strategy,
-        signal, timeframe, expectedProfit, tradeDurationSeconds,
+        signal, timeframe, expectedProfit, expectedLoss, tradeDurationSeconds,
       } = req.body;
 
       const id = uuidv4();
       const tf = timeframe || '1h';
+
+      // If expectedLoss is set, store it as a negative expectedProfit so the
+      // auto-close service knows to force a loss outcome of that magnitude.
+      const resolvedProfit = expectedLoss && expectedLoss > 0
+        ? -Math.abs(parseFloat(expectedLoss))
+        : expectedProfit || null;
 
       await pool.query(
         `INSERT INTO bot_trades
@@ -247,7 +253,7 @@ router.post(
            expected_profit, trade_duration_seconds)
          VALUES (?,?,?,?,?,?,0,0,?,?,?,NOW(),'open',?,?)`,
         [id, userId, pair, side, entryPrice, amount, strategy, signal || null, tf,
-         expectedProfit || null, tradeDurationSeconds || null]
+         resolvedProfit, tradeDurationSeconds || null]
       );
 
       const [[row]] = await pool.query('SELECT * FROM bot_trades WHERE id = ?', [id]);
@@ -295,7 +301,7 @@ router.patch(
   requireAdmin,
   [
     param('id').notEmpty(),
-    body('expectedProfit').optional().isFloat({ min: 0 }),
+    body('expectedProfit').optional().isFloat(),
     body('tradeDurationSeconds').optional().isInt({ min: 10 }),
   ],
   validate,
@@ -363,6 +369,33 @@ router.patch('/:id', async (req, res, next) => {
         'UPDATE users SET balance = balance + ? WHERE id = ?',
         [pnlVal, trade.user_id]
       );
+
+      // Write a trade_history record so it appears in Transactions / Trading History
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      const base = (trade.pair || 'BTC/USDT').split('/')[0];
+      const exitPriceVal = parseFloat(updates.exit_price ?? trade.exit_price ?? trade.entry_price);
+      pool.query(
+        `INSERT IGNORE INTO trade_history
+          (user_id, trade_id, date, time, type, executed_by, asset, asset_symbol,
+           pair, side, amount, amount_usd, entry_price, exit_price, profit_loss, pl_pct, status)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          trade.user_id, req.params.id, dateStr, timeStr,
+          'Spot', 'Trade Bot',
+          trade.pair, base,
+          trade.pair,
+          trade.side === 'buy' ? 'Buy' : 'Sell',
+          parseFloat(trade.amount),
+          Math.abs(pnlVal),
+          parseFloat(trade.entry_price),
+          exitPriceVal,
+          pnlVal,
+          pnlPctVal,
+          'completed',
+        ]
+      ).catch(err => console.error('[trade_history] insert error:', err.message));
 
       createUserNotification({
         userId: trade.user_id,
