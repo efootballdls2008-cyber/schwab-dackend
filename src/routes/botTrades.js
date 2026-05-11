@@ -143,16 +143,26 @@ router.post(
       const tradeStatus = status || 'open';
       const tf = timeframe || '1h';
 
+      // Convert ISO 8601 strings to MySQL DATETIME format (YYYY-MM-DD HH:MM:SS)
+      const toMysqlDatetime = (val) => {
+        if (!val) return null;
+        const d = new Date(val);
+        if (isNaN(d.getTime())) return null;
+        return d.toISOString().slice(0, 19).replace('T', ' ');
+      };
+      const openedAtMysql = toMysqlDatetime(openedAt) || toMysqlDatetime(new Date());
+      const closedAtMysql = toMysqlDatetime(closedAt);
+
       await pool.query(
         `INSERT INTO bot_trades
           (id, user_id, pair, side, entry_price, exit_price, amount,
-           pnl, pnl_pct, strategy, signal, timeframe, opened_at, closed_at, status,
+           pnl, pnl_pct, strategy, \`signal\`, timeframe, opened_at, closed_at, status,
            expected_profit, trade_duration_seconds)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id, userId, pair, side, entryPrice, exitPrice || null, amount,
           pnl || 0, pnlPct || 0, strategy || null, signal || null, tf,
-          openedAt || new Date(), closedAt || null, tradeStatus,
+          openedAtMysql, closedAtMysql || null, tradeStatus,
           expectedProfit || null, tradeDurationSeconds || null,
         ]
       );
@@ -171,7 +181,7 @@ router.post(
           type: 'bot_open',
           relatedId: id,
           relatedType: 'bot_trade',
-        });
+        }).catch(err => console.error('[Notification Error]', err));
 
         // Notify admin instantly
         const [[user]] = await pool.query('SELECT first_name, last_name FROM users WHERE id = ?', [userId]);
@@ -183,7 +193,7 @@ router.post(
           type: 'bot_position_open',
           relatedId: id,
           relatedType: 'bot_trade',
-        });
+        }).catch(err => console.error('[Notification Error]', err));
 
         // Emit real-time to admin
         socketService.emitToAdmins('botTrade:opened', {
@@ -224,20 +234,26 @@ router.post(
     try {
       const {
         userId, pair, side, entryPrice, amount, strategy,
-        signal, timeframe, expectedProfit, tradeDurationSeconds,
+        signal, timeframe, expectedProfit, expectedLoss, tradeDurationSeconds,
       } = req.body;
 
       const id = uuidv4();
       const tf = timeframe || '1h';
 
+      // If expectedLoss is set, store it as a negative expectedProfit so the
+      // auto-close service knows to force a loss outcome of that magnitude.
+      const resolvedProfit = expectedLoss && expectedLoss > 0
+        ? -Math.abs(parseFloat(expectedLoss))
+        : expectedProfit || null;
+
       await pool.query(
         `INSERT INTO bot_trades
           (id, user_id, pair, side, entry_price, amount,
-           pnl, pnl_pct, strategy, signal, timeframe, opened_at, status,
+           pnl, pnl_pct, strategy, \`signal\`, timeframe, opened_at, status,
            expected_profit, trade_duration_seconds)
          VALUES (?,?,?,?,?,?,0,0,?,?,?,NOW(),'open',?,?)`,
         [id, userId, pair, side, entryPrice, amount, strategy, signal || null, tf,
-         expectedProfit || null, tradeDurationSeconds || null]
+         resolvedProfit, tradeDurationSeconds || null]
       );
 
       const [[row]] = await pool.query('SELECT * FROM bot_trades WHERE id = ?', [id]);
@@ -253,7 +269,7 @@ router.post(
         type: 'bot_open',
         relatedId: id,
         relatedType: 'bot_trade',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
 
       // Notify admin
       const [[user]] = await pool.query('SELECT first_name, last_name FROM users WHERE id = ?', [userId]);
@@ -265,7 +281,7 @@ router.post(
         type: 'bot_position_open',
         relatedId: id,
         relatedType: 'bot_trade',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
 
       socketService.emitToAdmins('botTrade:opened', {
         tradeId: id, userId, userName, pair, side, strategy, timeframe: tf, entryPrice, amount,
@@ -285,7 +301,7 @@ router.patch(
   requireAdmin,
   [
     param('id').notEmpty(),
-    body('expectedProfit').optional().isFloat({ min: 0 }),
+    body('expectedProfit').optional().isFloat(),
     body('tradeDurationSeconds').optional().isInt({ min: 10 }),
   ],
   validate,
@@ -338,7 +354,7 @@ router.patch('/:id', async (req, res, next) => {
     await pool.query(`UPDATE bot_trades SET ${set} WHERE id = ?`, [...values, req.params.id]);
     const [[updated]] = await pool.query('SELECT * FROM bot_trades WHERE id = ?', [req.params.id]);
 
-    // If closing manually, cancel the auto-close timer
+    // If closing manually, cancel the auto-close timer and credit balance
     if (updates.status === 'closed' && trade.status !== 'closed') {
       cancelAutoClose(req.params.id);
 
@@ -347,6 +363,39 @@ router.patch('/:id', async (req, res, next) => {
       const isProfit = pnlVal >= 0;
       const pnlStr = `${isProfit ? '+' : ''}$${Math.abs(pnlVal).toFixed(2)} (${isProfit ? '+' : ''}${pnlPctVal.toFixed(2)}%)`;
       const closeType = isProfit ? 'take_profit' : 'stop_loss';
+
+      // Credit the user's balance with the trade P&L (mirrors executeAutoClose)
+      await pool.query(
+        'UPDATE users SET balance = balance + ? WHERE id = ?',
+        [pnlVal, trade.user_id]
+      );
+
+      // Write a trade_history record so it appears in Transactions / Trading History
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      const base = (trade.pair || 'BTC/USDT').split('/')[0];
+      const exitPriceVal = parseFloat(updates.exit_price ?? trade.exit_price ?? trade.entry_price);
+      pool.query(
+        `INSERT IGNORE INTO trade_history
+          (user_id, trade_id, date, time, type, executed_by, asset, asset_symbol,
+           pair, side, amount, amount_usd, entry_price, exit_price, profit_loss, pl_pct, status)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          trade.user_id, req.params.id, dateStr, timeStr,
+          'Spot', 'Trade Bot',
+          trade.pair, base,
+          trade.pair,
+          trade.side === 'buy' ? 'Buy' : 'Sell',
+          parseFloat(trade.amount),
+          Math.abs(pnlVal),
+          parseFloat(trade.entry_price),
+          exitPriceVal,
+          pnlVal,
+          pnlPctVal,
+          'completed',
+        ]
+      ).catch(err => console.error('[trade_history] insert error:', err.message));
 
       createUserNotification({
         userId: trade.user_id,
@@ -357,7 +406,7 @@ router.patch('/:id', async (req, res, next) => {
         type: closeType,
         relatedId: req.params.id,
         relatedType: 'bot_trade',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
     }
 
     res.json({ success: true, data: formatTrade(updated) });

@@ -21,8 +21,8 @@ router.post(
   [
     // Personal Info
     body('username')
+      .optional()
       .trim()
-      .notEmpty().withMessage('Username is required')
       .isLength({ min: 3, max: 100 }).withMessage('Username must be 3-100 characters')
       .matches(/^[a-zA-Z0-9_.-]+$/).withMessage('Username can only contain letters, numbers, dots, dashes, and underscores'),
     body('firstName')
@@ -87,17 +87,19 @@ router.post(
         });
       }
 
-      // Check username uniqueness
-      const [[existingUsername]] = await pool.query(
-        'SELECT id FROM users WHERE username = ?',
-        [username]
-      );
-      if (existingUsername) {
-        return res.status(409).json({
-          success: false,
-          field: 'username',
-          message: 'This username is already taken.',
-        });
+      // Check username uniqueness (only if username is provided)
+      if (username && username.trim()) {
+        const [[existingUsername]] = await pool.query(
+          'SELECT id FROM users WHERE username = ?',
+          [username]
+        );
+        if (existingUsername) {
+          return res.status(409).json({
+            success: false,
+            field: 'username',
+            message: 'This username is already taken.',
+          });
+        }
       }
 
       const hashed = await bcrypt.hash(password, 12);
@@ -108,10 +110,10 @@ router.post(
 
       const [result] = await pool.query(
         `INSERT INTO users
-           (username, email, password, first_name, last_name, phone, country,
+           (email, password, first_name, last_name, phone, country,
             role, account_status, member_since)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'Member', 'active', ?)`,
-        [username, email, hashed, firstName, lastName, phone, country, memberSince]
+         VALUES (?, ?, ?, ?, ?, ?, 'Member', 'active', ?)`,
+        [email, hashed, firstName, lastName, phone, country, memberSince]
       );
 
       const userId = result.insertId;
@@ -139,7 +141,7 @@ router.post(
             title: 'Starting Balance Credited',
             message: `Your account has been funded with a starting balance of $${starting.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. Start trading today!`,
             type: 'system',
-          });
+          }).catch(err => console.error('[Notification Error]', err));
         }
 
         if (bonus > 0) {
@@ -148,7 +150,7 @@ router.post(
             title: 'Welcome Bonus Received',
             message: `Congratulations! A welcome bonus of $${bonus.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been added to your account.`,
             type: 'system',
-          });
+          }).catch(err => console.error('[Notification Error]', err));
         }
       }
 
@@ -161,7 +163,7 @@ router.post(
         title: 'Welcome to Charles Schwab Trading Platform! 🎉',
         message: `Hi ${firstName}! Welcome aboard. We're excited to have you join our trading community. Explore our platform features, check out the market overview, and start your trading journey today. If you need any help, our support team is here for you 24/7.`,
         type: 'system',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
 
       // Send welcome email (fire-and-forget)
       emailService.sendWelcomeEmail(userId, email, firstName)
@@ -197,6 +199,10 @@ router.post(
 );
 
 // ── POST /auth/login ─────────────────────────────────────────
+// Per-account brute-force constants
+const LOGIN_MAX_ATTEMPTS  = parseInt(process.env.LOGIN_MAX_ATTEMPTS)  || 10;
+const LOGIN_LOCKOUT_MINS  = parseInt(process.env.LOGIN_LOCKOUT_MINS)  || 15;
+
 router.post(
   '/login',
   [
@@ -208,13 +214,15 @@ router.post(
     try {
       const { email, password } = req.body;
 
+      // SELECT * so the query doesn't fail if the brute-force columns
+      // (failed_login_attempts, locked_until) haven't been migrated yet.
       const [[user]] = await pool.query(
-        `SELECT id, email, password, role, account_status, first_name, last_name
-         FROM users WHERE email = ?`,
+        `SELECT * FROM users WHERE email = ?`,
         [email]
       );
 
       if (!user) {
+        // Respond with the same message to avoid user enumeration
         return res.status(401).json({ success: false, message: 'Invalid credentials' });
       }
 
@@ -225,10 +233,47 @@ router.post(
         });
       }
 
+      // Per-account lockout check (gracefully skipped if columns not yet migrated)
+      try {
+        if (user.locked_until && new Date(user.locked_until) > new Date()) {
+          const remaining = Math.ceil((new Date(user.locked_until) - Date.now()) / 60000);
+          return res.status(429).json({
+            success: false,
+            message: `Too many failed attempts. Try again in ${remaining} minute${remaining !== 1 ? 's' : ''}.`,
+          });
+        }
+      } catch { /* columns not yet migrated — skip lockout check */ }
+
       const valid = await bcrypt.compare(password, user.password);
       if (!valid) {
+        // Increment failed attempt counter; lock account after threshold.
+        // Wrapped in try/catch — if the columns don't exist yet, just return 401.
+        try {
+          const attempts = (user.failed_login_attempts || 0) + 1;
+          if (attempts >= LOGIN_MAX_ATTEMPTS) {
+            const lockedUntil = new Date(Date.now() + LOGIN_LOCKOUT_MINS * 60 * 1000);
+            await pool.query(
+              'UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?',
+              [attempts, lockedUntil, user.id]
+            );
+            return res.status(429).json({
+              success: false,
+              message: `Too many failed attempts. Account locked for ${LOGIN_LOCKOUT_MINS} minutes.`,
+            });
+          }
+          await pool.query(
+            'UPDATE users SET failed_login_attempts = ? WHERE id = ?',
+            [attempts, user.id]
+          );
+        } catch { /* columns not yet migrated — skip counter update */ }
         return res.status(401).json({ success: false, message: 'Invalid credentials' });
       }
+
+      // Successful login — reset lockout counters (best-effort)
+      pool.query(
+        'UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?',
+        [user.id]
+      ).catch(() => { /* columns not yet migrated — safe to ignore */ });
 
       const token = jwt.sign(
         { id: user.id, email: user.email, role: user.role },
@@ -251,7 +296,7 @@ router.post(
           title: 'Welcome Back! 👋',
           message: `Hi ${user.first_name}! You've successfully logged in. Check out the latest market trends and manage your portfolio.`,
           type: 'system',
-        });
+        }).catch(err => console.error('[Notification Error]', err));
       }
 
       return res.json({

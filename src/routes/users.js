@@ -76,8 +76,25 @@ router.patch(
         return res.status(403).json({ success: false, message: 'Forbidden' });
       }
 
-      // Non-admin users cannot touch admin-only fields
+      // Non-admin users cannot touch admin-only fields.
+      // This is enforced in two layers:
+      //   1. Explicit early rejection — catches direct snake_case keys (e.g. { "role": "Admin" })
+      //      that would bypass the camelCase→snake_case field map.
+      //   2. Whitelist filter below — removes admin-only columns from the effective whitelist.
       const adminOnlyFields = new Set(['balance', 'account_status', 'role']);
+      if (req.user.role !== 'Admin') {
+        const forbidden = Object.keys(req.body).find(key => {
+          const col = USERS_FIELD_MAP[key] ?? key;
+          return adminOnlyFields.has(col);
+        });
+        if (forbidden) {
+          return res.status(403).json({
+            success: false,
+            message: `Field '${forbidden}' can only be updated by an admin.`,
+          });
+        }
+      }
+
       const effectiveWhitelist = req.user.role === 'Admin'
         ? USERS_WHITELIST
         : new Set([...USERS_WHITELIST].filter(c => !adminOnlyFields.has(c)));
@@ -126,7 +143,7 @@ router.patch(
             title: 'Balance Updated',
             message: `Your account balance has been updated. $${diff.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been added to your account by the platform.`,
             type: 'system',
-          });
+          }).catch(err => console.error('[Notification Error]', err));
         }
       }
 

@@ -18,17 +18,20 @@ function init(io) {
   _io = io;
 
   io.on('connection', (socket) => {
-    const { role, adminId } = socket.handshake.auth;
-    // userId is stored as adminId in the JWT middleware (it's just the decoded id)
-    const userId = adminId;
+    // Read role and userId from socket.data — populated by the JWT middleware
+    // from the verified token. socket.data is server-controlled and cannot be
+    // written by the client, unlike socket.handshake.auth which the client
+    // sends and could be spoofed if the middleware were ever removed or reordered.
+    const role = socket.data.role;
+    const uid  = socket.data.userId ?? socket.handshake.auth?.adminId; // adminId: legacy fallback
 
     if (role === 'Admin') {
       socket.join('admins');
-      console.log(`[socket] Admin ${userId} connected (${socket.id})`);
-    } else if (userId) {
+      console.log(`[socket] Admin ${uid} connected (${socket.id})`);
+    } else if (uid) {
       // Regular users join their personal room
-      socket.join(`user:${userId}`);
-      console.log(`[socket] User ${userId} connected (${socket.id})`);
+      socket.join(`user:${uid}`);
+      console.log(`[socket] User ${uid} connected (${socket.id})`);
     }
 
     // Allow admin to mark a notification read via socket (optional convenience)
@@ -38,9 +41,9 @@ function init(io) {
 
     socket.on('disconnect', () => {
       if (role === 'Admin') {
-        console.log(`[socket] Admin ${userId} disconnected (${socket.id})`);
-      } else if (userId) {
-        console.log(`[socket] User ${userId} disconnected (${socket.id})`);
+        console.log(`[socket] Admin ${uid} disconnected (${socket.id})`);
+      } else if (uid) {
+        console.log(`[socket] User ${uid} disconnected (${socket.id})`);
       }
     });
   });

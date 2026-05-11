@@ -118,7 +118,7 @@ router.post(
         type: 'security',
         relatedId: result.insertId,
         relatedType: 'kyc',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
 
       // Notify admin
       const [[user]] = await pool.query('SELECT first_name, last_name FROM users WHERE id = ?', [userId]);
@@ -129,7 +129,7 @@ router.post(
         type: 'system_alert',
         relatedId: result.insertId,
         relatedType: 'kyc',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
 
       res.status(201).json({ success: true, data: rowToResponse(row) });
     } catch (err) {
@@ -258,7 +258,7 @@ router.patch(
           type: 'security',
           relatedId: req.params.id,
           relatedType: 'kyc',
-        });
+        }).catch(err => console.error('[Notification Error]', err));
       } else {
         createUserNotification({
           userId: submission.user_id,
@@ -269,7 +269,7 @@ router.patch(
           type: 'security',
           relatedId: req.params.id,
           relatedType: 'kyc',
-        });
+        }).catch(err => console.error('[Notification Error]', err));
       }
 
       res.json({ success: true, data: rowToResponse(updated) });

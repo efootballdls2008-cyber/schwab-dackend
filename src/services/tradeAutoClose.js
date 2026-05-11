@@ -73,6 +73,13 @@ function scheduleAutoClose(trade, adminDurationSeconds = null, adminTargetProfit
     tradeId,
   };
 
+  // Persist the duration on the trade row so restoreOpenTrades can calculate
+  // the correct remaining time after a server restart.
+  pool.query(
+    'UPDATE bot_trades SET trade_duration_seconds = ? WHERE id = ? AND trade_duration_seconds IS NULL',
+    [durationSeconds, tradeId]
+  ).catch(() => { /* non-critical */ });
+
   return durationSeconds;
 }
 
@@ -118,8 +125,15 @@ async function executeAutoClose(tradeId, adminTargetProfit = null) {
     // Use admin-set target profit if stored on timer
     const targetProfit = adminTargetProfit ?? (activeTimers[tradeId]?.targetProfit ?? null);
 
-    // Decide outcome based on strategy ratio (async — persists counters to DB)
-    const outcome = await decideOutcome(trade.user_id, trade.strategy || 'AI Scalper Pro');
+    // Negative targetProfit = admin forced a loss — skip the win/loss cycle
+    let outcome;
+    if (targetProfit !== null && targetProfit < 0) {
+      outcome = 'loss';
+    } else {
+      // Decide outcome based on strategy ratio (async — persists counters to DB)
+      outcome = await decideOutcome(trade.user_id, trade.strategy || 'AI Scalper Pro');
+    }
+
     const { pnl, pnlPct, exitPrice } = calculateFinalPnL(trade, outcome, targetProfit);
 
     const closedAt = new Date();
@@ -138,13 +152,7 @@ async function executeAutoClose(tradeId, adminTargetProfit = null) {
       [exitPrice, pnl, pnlPct, pnl, closedAt, tradeId]
     );
 
-    // Credit or debit the user's balance with the P&L
-    await pool.query(
-      'UPDATE users SET balance = balance + ? WHERE id = ?',
-      [pnl, trade.user_id]
-    );
-
-    // Credit or debit the user's balance with the trade P&L.
+    // Credit the user's balance with the trade P&L.
     // pnl is positive for profit, negative for loss — adding it covers both cases.
     await pool.query(
       'UPDATE users SET balance = balance + ? WHERE id = ?',
@@ -199,6 +207,31 @@ async function executeAutoClose(tradeId, adminTargetProfit = null) {
       pnlPct,
       closedAt: closedAt.toISOString(),
     });
+
+    // Write a trade_history record so it appears in Transactions / Trading History
+    const dateStr = closedAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const timeStr = closedAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const base = (trade.pair || 'BTC/USDT').split('/')[0];
+    pool.query(
+      `INSERT IGNORE INTO trade_history
+        (user_id, trade_id, date, time, type, executed_by, asset, asset_symbol,
+         pair, side, amount, amount_usd, entry_price, exit_price, profit_loss, pl_pct, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        trade.user_id, tradeId, dateStr, timeStr,
+        'Spot', 'Trade Bot',
+        trade.pair, base,
+        trade.pair,
+        trade.side === 'buy' ? 'Buy' : 'Sell',
+        parseFloat(trade.amount),
+        Math.abs(pnl),
+        parseFloat(trade.entry_price),
+        exitPrice,
+        pnl,
+        pnlPct,
+        'completed',
+      ]
+    ).catch(err => console.error('[trade_history] insert error:', err.message));
 
     console.log(`[AutoClose] Trade ${tradeId} closed. Outcome: ${outcome}, P&L: ${pnlStr}`);
   } catch (err) {

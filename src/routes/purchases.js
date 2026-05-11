@@ -72,7 +72,7 @@ router.post(
         type: type === 'buy_crypto' ? 'buy_crypto' : 'buy_stocks',
         relatedId: result.insertId,
         relatedType: 'purchase',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
       // User notification
       createUserNotification({
         userId,
@@ -81,7 +81,7 @@ router.post(
         type: 'order',
         relatedId: result.insertId,
         relatedType: 'purchase',
-      });
+      }).catch(err => console.error('[Notification Error]', err));
 
       res.status(201).json({ success: true, data: row });
     } catch (err) {
@@ -112,10 +112,24 @@ router.patch(
 
       // Deduct balance on approval
       if (status === 'completed' && purchase.status !== 'completed') {
-        await pool.query(
-          'UPDATE users SET balance = balance - ? WHERE id = ?',
-          [purchase.total_cost, purchase.user_id]
-        );
+        const conn = await pool.getConnection();
+        try {
+          await conn.beginTransaction();
+          // Lock the user row to prevent concurrent double-approvals
+          const [[user]] = await conn.query('SELECT balance FROM users WHERE id = ? FOR UPDATE', [purchase.user_id]);
+          if (!user || parseFloat(user.balance) < parseFloat(purchase.total_cost)) {
+            await conn.rollback();
+            conn.release();
+            return res.status(422).json({ success: false, message: 'Insufficient balance to complete this purchase' });
+          }
+          await conn.query('UPDATE users SET balance = balance - ? WHERE id = ?', [purchase.total_cost, purchase.user_id]);
+          await conn.commit();
+          conn.release();
+        } catch (err) {
+          await conn.rollback();
+          conn.release();
+          throw err;
+        }
       }
 
       const [[updated]] = await pool.query('SELECT * FROM purchases WHERE id = ?', [req.params.id]);
@@ -129,7 +143,7 @@ router.patch(
           type: 'order',
           relatedId: req.params.id,
           relatedType: 'purchase',
-        });
+        }).catch(err => console.error('[Notification Error]', err));
       } else if (status === 'rejected') {
         createUserNotification({
           userId: purchase.user_id,
@@ -138,7 +152,7 @@ router.patch(
           type: 'order',
           relatedId: req.params.id,
           relatedType: 'purchase',
-        });
+        }).catch(err => console.error('[Notification Error]', err));
       }
 
       res.json({ success: true, data: updated });

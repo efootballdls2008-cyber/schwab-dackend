@@ -48,11 +48,13 @@ router.post(
     body('method').trim().notEmpty(),
     body('amount').isFloat({ min: 0.01 }).withMessage('Amount must be positive'),
     body('txId').optional().trim(),
+    body('note').optional().trim().isLength({ max: 500 }).withMessage('Note must be 500 characters or fewer'),
+    body('screenshot').optional().isString(),
   ],
   validate,
   async (req, res, next) => {
     try {
-      const { userId, type, method, amount, currency, status, date, time, txId, note } = req.body;
+      const { userId, type, method, amount, currency, status, date, time, txId, note, screenshot } = req.body;
       if (req.user.role !== 'Admin' && req.user.id !== userId) {
         return res.status(403).json({ success: false, message: 'Forbidden' });
       }
@@ -103,10 +105,10 @@ router.post(
           await conn.query('UPDATE users SET balance = balance - ? WHERE id = ?', [amount, userId]);
 
           const [result] = await conn.query(
-            `INSERT INTO deposits (user_id, type, method, amount, currency, status, date, time, tx_id, note)
-             VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            `INSERT INTO deposits (user_id, type, method, amount, currency, status, date, time, tx_id, note, screenshot)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
             [userId, type, method, amount, currency || 'USD', 'pending',
-             date || null, time || null, txId, note || null]
+             date || null, time || null, txId, note || null, screenshot || null]
           );
 
           await conn.commit();
@@ -131,11 +133,15 @@ router.post(
         }
       }
 
+      // Always force 'pending' for user-submitted deposits.
+      // Only admins may set an explicit status (e.g. when creating on behalf of a user).
+      const insertStatus = req.user.role === 'Admin' ? (status || 'pending') : 'pending';
+
       const [result] = await pool.query(
-        `INSERT INTO deposits (user_id, type, method, amount, currency, status, date, time, tx_id, note)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        [userId, type, method, amount, currency || 'USD', status || 'pending',
-         date || null, time || null, txId || null, note || null]
+        `INSERT INTO deposits (user_id, type, method, amount, currency, status, date, time, tx_id, note, screenshot)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        [userId, type, method, amount, currency || 'USD', insertStatus,
+         date || null, time || null, txId || null, note || null, screenshot || null]
       );
       const [[row]] = await pool.query('SELECT * FROM deposits WHERE id = ?', [result.insertId]);
 
@@ -144,7 +150,7 @@ router.post(
         await notificationService.notifyDeposit(userId, {
           amount: parseFloat(amount).toFixed(2),
           currency: currency || 'USD',
-          status: status || 'pending',
+          status: insertStatus,
           tx_id: txId,
           method,
           id: result.insertId,
@@ -279,8 +285,19 @@ router.delete('/', requireAdmin, async (req, res, next) => {
     });
   }
   try {
+    // Count records before deletion so the audit log is meaningful
+    const [[{ total }]] = await pool.query('SELECT COUNT(*) AS total FROM deposits');
+
     await pool.query('DELETE FROM deposits');
-    res.json({ success: true, message: 'All deposits deleted' });
+
+    // Audit trail — record who deleted all deposits and how many were removed
+    await pool.query(
+      `INSERT INTO admin_actions (admin_id, action, entity, details, created_at)
+       VALUES (?, 'bulk_delete', 'deposits', ?, NOW())`,
+      [req.user.id, JSON.stringify({ deleted_count: total, performed_by: req.user.email })]
+    ).catch(err => console.error('[Audit] Failed to log bulk delete:', err.message));
+
+    res.json({ success: true, message: `All deposits deleted (${total} records removed)` });
   } catch (err) {
     next(err);
   }

@@ -1,5 +1,5 @@
 const express = require('express');
-const { body } = require('express-validator');
+const { body, param } = require('express-validator');
 const pool = require('../db/pool');
 const validate = require('../middleware/validate');
 const { authenticate, requireAdmin } = require('../middleware/auth');
@@ -61,7 +61,8 @@ router.delete('/', async (req, res, next) => {
 // ── DELETE /adminActions/:id  (Admin only) ───────────────────
 router.delete(
   '/:id',
-  [body('id').optional()],
+  [param('id').isInt({ min: 1 }).withMessage('Invalid action ID')],
+  validate,
   async (req, res, next) => {
     try {
       const [result] = await pool.query('DELETE FROM admin_actions WHERE id = ?', [req.params.id]);
