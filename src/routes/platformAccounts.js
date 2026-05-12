@@ -66,6 +66,7 @@ router.post(
       const {
         accountName, paymentMethod, bankName, accountNumber, routingNumber,
         accountType, swiftCode, walletAddress, network, bankAddress, myAddress,
+        homeAddress, iban, sortCode, currencyAccepted, coinSymbol, qrCodeImage,
         isDefault, assignedTo, status,
       } = req.body;
 
@@ -73,8 +74,9 @@ router.post(
         `INSERT INTO platform_accounts
           (account_name, payment_method, bank_name, account_number, routing_number,
            account_type, swift_code, wallet_address, network, bank_address, my_address,
+           home_address, iban, sort_code, currency_accepted, coin_symbol, qr_code_image,
            is_default, assigned_to, status)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           accountName,
           paymentMethod,
@@ -87,6 +89,12 @@ router.post(
           network || null,
           bankAddress || null,
           myAddress || null,
+          homeAddress || null,
+          iban || null,
+          sortCode || null,
+          currencyAccepted || null,
+          coinSymbol || null,
+          qrCodeImage || null,
           isDefault ? 1 : 0,
           assignedTo || 'deposit',
           status || 'active',
@@ -112,19 +120,25 @@ router.patch(
       if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
 
       const fieldMap = {
-        accountName:    'account_name',
-        paymentMethod:  'payment_method',
-        bankName:       'bank_name',
-        accountNumber:  'account_number',
-        routingNumber:  'routing_number',
-        accountType:    'account_type',
-        swiftCode:      'swift_code',
-        walletAddress:  'wallet_address',
-        network:        'network',
-        bankAddress:    'bank_address',
-        myAddress:      'my_address',
-        isDefault:      'is_default',
-        assignedTo:     'assigned_to',
+        accountName:      'account_name',
+        paymentMethod:    'payment_method',
+        bankName:         'bank_name',
+        accountNumber:    'account_number',
+        routingNumber:    'routing_number',
+        accountType:      'account_type',
+        swiftCode:        'swift_code',
+        walletAddress:    'wallet_address',
+        network:          'network',
+        bankAddress:      'bank_address',
+        myAddress:        'my_address',
+        homeAddress:      'home_address',
+        iban:             'iban',
+        sortCode:         'sort_code',
+        currencyAccepted: 'currency_accepted',
+        coinSymbol:       'coin_symbol',
+        qrCodeImage:      'qr_code_image',
+        isDefault:        'is_default',
+        assignedTo:       'assigned_to',
       };
       const allowed = Object.values(fieldMap).concat(['status']);
       const updates = {};

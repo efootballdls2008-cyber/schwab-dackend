@@ -48,7 +48,7 @@ function fetchFromBinance(symbol) {
 // These are approximate values — the frontend will show them as "offline" prices
 // until a live feed is available. Update periodically if needed.
 const FALLBACK_PRICES = {
-  BTCUSDT:  { lastPrice: '67420.00', priceChangePercent: '1.25',  volume: '28500.123' },
+  BTCUSDT:  { lastPrice: '81680.00', priceChangePercent: '1.25',  volume: '28500.123' },
   ETHUSDT:  { lastPrice: '3520.00',  priceChangePercent: '2.10',  volume: '185000.456' },
   SOLUSDT:  { lastPrice: '178.50',   priceChangePercent: '-0.85', volume: '4200000.789' },
   BNBUSDT:  { lastPrice: '608.00',   priceChangePercent: '0.55',  volume: '1250000.321' },
