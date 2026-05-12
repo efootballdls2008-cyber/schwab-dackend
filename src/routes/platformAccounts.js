@@ -55,10 +55,8 @@ router.post(
     body('accountName').trim().notEmpty().withMessage('Account name is required'),
     body('paymentMethod').isIn(PAYMENT_METHODS).withMessage('Invalid payment method'),
     body('assignedTo').isIn(ASSIGNED_TO_VALUES).withMessage('Invalid assigned_to value'),
-    // Crypto requires walletAddress; bank types require bankName + accountNumber
+    // Crypto requires walletAddress only; bank/wire fields are all optional
     body('walletAddress').if(body('paymentMethod').equals('crypto')).trim().notEmpty().withMessage('Wallet address required for crypto'),
-    body('bankName').if(body('paymentMethod').not().equals('crypto')).trim().notEmpty().withMessage('Bank name required'),
-    body('accountNumber').if(body('paymentMethod').not().equals('crypto')).trim().notEmpty().withMessage('Account number required'),
   ],
   validate,
   async (req, res, next) => {
