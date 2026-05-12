@@ -227,6 +227,12 @@ async function runMigrations() {
     `ALTER TABLE deposits ADD COLUMN IF NOT EXISTS screenshot MEDIUMTEXT DEFAULT NULL`,
     `ALTER TABLE deposits ADD COLUMN IF NOT EXISTS rejection_reason TEXT DEFAULT NULL`,
     `ALTER TABLE purchases ADD COLUMN IF NOT EXISTS rejection_reason TEXT DEFAULT NULL`,
+    `ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS home_address VARCHAR(500) DEFAULT NULL`,
+    `ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS iban VARCHAR(100) DEFAULT NULL`,
+    `ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS sort_code VARCHAR(20) DEFAULT NULL`,
+    `ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS currency_accepted VARCHAR(100) DEFAULT NULL`,
+    `ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS coin_symbol VARCHAR(20) DEFAULT NULL`,
+    `ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS qr_code_image MEDIUMTEXT DEFAULT NULL`,
   ];
 
   const createMigrations = [
