@@ -67,22 +67,31 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 -- payment_method: bank_transfer | credit_card | wire_transfer | crypto
 -- assigned_to:    deposit | buy_crypto | buy_stock | all
 CREATE TABLE IF NOT EXISTS platform_accounts (
-  id              INT AUTO_INCREMENT PRIMARY KEY,
-  account_name    VARCHAR(255) NOT NULL,
-  payment_method  ENUM('bank_transfer','credit_card','wire_transfer','crypto') NOT NULL DEFAULT 'bank_transfer',
-  bank_name       VARCHAR(255) DEFAULT NULL,
-  account_number  VARCHAR(100) DEFAULT NULL,
-  routing_number  VARCHAR(100) DEFAULT NULL,
-  account_type    VARCHAR(100) DEFAULT NULL,
-  swift_code      VARCHAR(50) DEFAULT NULL,
-  bank_address    VARCHAR(500) DEFAULT NULL,
-  my_address      VARCHAR(500) DEFAULT NULL,
-  wallet_address  VARCHAR(500) DEFAULT NULL,
-  network         VARCHAR(100) DEFAULT NULL,
-  is_default      TINYINT(1) NOT NULL DEFAULT 0,
-  assigned_to     ENUM('deposit','buy_crypto','buy_stock','all') NOT NULL DEFAULT 'deposit',
-  status          ENUM('active','inactive') NOT NULL DEFAULT 'active',
-  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  id                INT AUTO_INCREMENT PRIMARY KEY,
+  account_name      VARCHAR(255) NOT NULL,
+  payment_method    ENUM('bank_transfer','credit_card','wire_transfer','crypto') NOT NULL DEFAULT 'bank_transfer',
+  -- Bank / Wire Transfer fields
+  bank_name         VARCHAR(255) DEFAULT NULL,
+  account_number    VARCHAR(100) DEFAULT NULL,
+  routing_number    VARCHAR(100) DEFAULT NULL,
+  account_type      VARCHAR(100) DEFAULT NULL,
+  swift_code        VARCHAR(50)  DEFAULT NULL,
+  bank_address      VARCHAR(500) DEFAULT NULL,
+  my_address        VARCHAR(500) DEFAULT NULL,
+  -- Wire Transfer extra fields
+  iban              VARCHAR(100) DEFAULT NULL,
+  sort_code         VARCHAR(20)  DEFAULT NULL,
+  currency_accepted VARCHAR(100) DEFAULT NULL,
+  -- Crypto fields
+  coin_symbol       VARCHAR(20)  DEFAULT NULL,
+  wallet_address    VARCHAR(500) DEFAULT NULL,
+  network           VARCHAR(100) DEFAULT NULL,
+  qr_code_image     MEDIUMTEXT   DEFAULT NULL,
+  -- Meta
+  is_default        TINYINT(1)   NOT NULL DEFAULT 0,
+  assigned_to       ENUM('deposit','buy_crypto','buy_stock','all') NOT NULL DEFAULT 'deposit',
+  status            ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  created_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ── Wallets ──────────────────────────────────────────────────
@@ -383,3 +392,8 @@ CREATE TABLE IF NOT EXISTS bot_strategy_counters (
 -- ALTER TABLE bot_trades ADD COLUMN IF NOT EXISTS close_reason VARCHAR(50) DEFAULT NULL;
 -- ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS confidence_threshold DECIMAL(5,2) NOT NULL DEFAULT 45.00;
 -- ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS trade_duration_seconds INT DEFAULT NULL;
+-- ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS iban VARCHAR(100) DEFAULT NULL;
+-- ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS sort_code VARCHAR(20) DEFAULT NULL;
+-- ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS currency_accepted VARCHAR(100) DEFAULT NULL;
+-- ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS coin_symbol VARCHAR(20) DEFAULT NULL;
+-- ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS qr_code_image MEDIUMTEXT DEFAULT NULL;

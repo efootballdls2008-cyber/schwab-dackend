@@ -106,7 +106,7 @@ async function seed() {
   // ── Holdings ───────────────────────────────────────────────
   const holdings = [
     [1, 2, 'stock', 'AAPL', 'Apple Inc.', '#a2a2a2', 0, 188.62, 189.3],
-    [2, 2, 'crypto', 'BTC', 'Bitcoin', '#f7931a', 0, 62000, 67420],
+    [2, 2, 'crypto', 'BTC', 'Bitcoin', '#f7931a', 0, 62000, 81680],
     [3, 2, 'stock', 'MSFT', 'Microsoft', '#00a4ef', 0, 411.95, 415.2],
     [4, 2, 'crypto', 'ETH', 'Ethereum', '#627eea', 0, 2450, 2873],
   ];

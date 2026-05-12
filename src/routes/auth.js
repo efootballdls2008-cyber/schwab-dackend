@@ -45,6 +45,10 @@ router.post(
       .trim()
       .notEmpty().withMessage('Country is required')
       .isLength({ max: 100 }).withMessage('Country name too long'),
+    body('currency')
+      .optional()
+      .trim()
+      .isLength({ max: 10 }).withMessage('Currency code too long'),
     // Security
     body('password')
       .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
@@ -72,7 +76,7 @@ router.post(
         });
       }
 
-      const { username, firstName, lastName, email, phone, country, password } = req.body;
+      const { username, firstName, lastName, email, phone, country, currency, password } = req.body;
 
       // Check email uniqueness
       const [[existingEmail]] = await pool.query(
@@ -110,10 +114,10 @@ router.post(
 
       const [result] = await pool.query(
         `INSERT INTO users
-           (email, password, first_name, last_name, phone, country,
+           (email, password, first_name, last_name, phone, country, currency,
             role, account_status, member_since)
-         VALUES (?, ?, ?, ?, ?, ?, 'Member', 'active', ?)`,
-        [email, hashed, firstName, lastName, phone, country, memberSince]
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'Member', 'active', ?)`,
+        [email, hashed, firstName, lastName, phone, country, currency || 'USD', memberSince]
       );
 
       const userId = result.insertId;
