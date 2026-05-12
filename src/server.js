@@ -235,6 +235,21 @@ async function runMigrations() {
     `ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS qr_code_image MEDIUMTEXT DEFAULT NULL`,
   ];
 
+  // ── MODIFY COLUMN migrations (make columns nullable) ─────────
+  // These run unconditionally — MODIFY COLUMN is idempotent for nullability changes.
+  const modifyMigrations = [
+    `ALTER TABLE platform_accounts MODIFY COLUMN bank_name VARCHAR(255) DEFAULT NULL`,
+    `ALTER TABLE platform_accounts MODIFY COLUMN account_number VARCHAR(100) DEFAULT NULL`,
+  ];
+
+  for (const sql of modifyMigrations) {
+    try {
+      await pool.query(sql);
+    } catch (err) {
+      console.error('[migrate] MODIFY error:', err.message);
+    }
+  }
+
   const createMigrations = [
     `CREATE TABLE IF NOT EXISTS user_notifications (
       id            INT AUTO_INCREMENT PRIMARY KEY,
